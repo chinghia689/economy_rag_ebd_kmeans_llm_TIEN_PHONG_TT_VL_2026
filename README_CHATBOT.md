@@ -219,9 +219,10 @@ Trong `files_rag_chat_agent.py`, hàm `retrieve()`:
 energy_retriever = EnergyRetriever(
     vector_store=self.vector_store,
     embeddings_model=self.embeddings,
-    k_retrieve=30,         # Số top docs để lấy từ Cosine (mặc định 30)
-    k_clusters=7,          # Số clusters K-Means (mặc định 7)
-    similarity_threshold=0.40  # Ngưỡng cosine similarity (mặc định 0.40)
+    k_retrieve=40,         # Số top docs để lấy từ Cosine (mặc định 40)
+    n_top_clusters=1,      # Số clusters tốt nhất (mặc định 1)
+    # Toàn bộ 40 docs vào K-Means trực tiếp (không lọc threshold)
+    # Docs trong cluster winner được đưa vào LLM
 )
 ```
 
@@ -243,8 +244,7 @@ db_manager.process_and_store(
 1. **Load Vector Store**: Tải ChromaDB từ disk
 2. **Initial Retrieval**: Cosine similarity search → Top 30 documents
 3. **Embedding**: Re-embed query và documents
-4. **Similarity Check**: Kiểm tra max cosine similarity vs threshold
-5. **K-Means Clustering**: Gom chúng thành 7 clusters
+4. **K-Means Clustering**: Gom toàn bộ 40 docs thành K clusters (tự chọn K tối ưu)
 6. **Energy Distance**: Tìm cluster "tốt nhất" dựa trên energy distance
 7. **Final Selection**: Trả về documents từ best cluster
 
@@ -276,8 +276,9 @@ python ingestion/vector_data_builder.py
 ### "Không có documents liên quan"
 
 Điều chỉnh ngưỡng tương tự:
-```python
-similarity_threshold=0.30  # Giảm từ 0.40 xuống 0.30
+```
+Toàn bộ 40 docs được đưa vào K-Means trực tiếp (không lọc threshold).
+Nếu muốn điều chỉnh: thay đổi k_retrieve trong energy_kmeans.py
 ```
 
 ### "LLM API key không hợp lệ"

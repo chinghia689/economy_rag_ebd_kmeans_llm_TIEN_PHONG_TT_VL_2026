@@ -222,10 +222,10 @@ START → retrieve → grade_documents
 | Chunk overlap | 80 | `chunks_document.py` |
 | Vector store | ChromaDB (`./chroma_economy_db`) | `chunks_document.py` |
 | Top-K retrieval | 40 | `energy_kmeans.py` |
-| Cosine threshold | 0.50 | `energy_kmeans.py` |
+| Filter | Không lọc — toàn bộ 40 docs vào K-Means trực tiếp | `energy_kmeans.py` |
 | K-Means range | 2 → min(10, n-1), chọn theo Silhouette | `energy_kmeans.py` |
 | Top clusters | 1 | `energy_kmeans.py` |
-| Max final docs | 15 | `energy_kmeans.py` |
+| Max final docs | Toàn bộ docs trong cluster winner (không giới hạn) | `energy_kmeans.py` |
 | LLM provider | OpenAI | `llm.py` |
 | Temperature | 0.01 | `llm.py` |
 | Evaluation metrics | ROUGE-2, BLEU-2, Cosine, MRR, Hit@5, NDCG@5 | `scoring/` |
@@ -235,7 +235,7 @@ START → retrieve → grade_documents
 ## 10. Đặc điểm phương pháp
 
 Phương pháp này:
-* **Lọc đa tầng**: Cosine threshold → K-Means + Silhouette → Energy Distance → LLM Grading
+* **Lọc đa tầng**: Top-40 cosine → K-Means + Silhouette → Energy Distance → LLM Grading
 * **Tự động chọn K tối ưu** thay vì hardcode số cụm
 * **So sánh ở mức phân phối** (Energy Distance) thay vì chỉ so với centroid
 * **Batch grading** bằng LLM: giảm từ N lần gọi API xuống còn 1 lần duy nhất

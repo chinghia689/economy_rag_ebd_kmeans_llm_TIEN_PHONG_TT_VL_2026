@@ -64,9 +64,7 @@ class FilesChatAgent:
             vector_store=self.vector_store,
             embeddings_model=self.embeddings,
             k_retrieve=40,
-            similarity_threshold=0.50,
-            n_top_clusters=1,
-            max_final_docs=15
+            n_top_clusters=1
         )
 
     def handle_no_answer(self, state: GraphState) -> Dict[str, Any]:
