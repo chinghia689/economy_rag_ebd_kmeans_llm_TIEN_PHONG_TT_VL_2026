@@ -1,0 +1,38 @@
+# ══════════════════════════════════════════════
+# Docker Compose - Chatbot Kinh Tế Việt Nam
+# ══════════════════════════════════════════════
+# Khởi động:  docker compose up -d
+# Dừng:       docker compose down
+# Logs:       docker compose logs -f chatbot
+# ══════════════════════════════════════════════
+
+services:
+  chatbot:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: chatbot-kinhte
+    ports:
+      - "8000:8000"
+    env_file:
+      - .env
+    environment:
+      - PORT=8000
+      - DEFAULT_LLM=openai
+    volumes:
+      # Mount vector DB để không cần rebuild khi update dữ liệu
+      - ./chroma_economy_db:/app/chroma_economy_db
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/api/health')"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 120s  # Cho phép 2 phút để load model embedding

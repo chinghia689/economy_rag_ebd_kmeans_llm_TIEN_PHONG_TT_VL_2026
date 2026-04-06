@@ -1,0 +1,218 @@
+"""
+🚀 FastAPI Server cho Chatbot Kinh Tế Việt Nam.
+
+Khởi động:
+    python chatbot/services/server.py
+    hoặc:
+    uvicorn chatbot.services.server:app --host 0.0.0.0 --port 8000 --reload
+"""
+
+import os
+import sys
+import time
+from pathlib import Path
+from typing import Optional
+
+from dotenv import load_dotenv
+
+# Setup paths
+PROJECT_ROOT = Path(__file__).parent.parent.parent
+sys.path.insert(0, str(PROJECT_ROOT))
+load_dotenv(PROJECT_ROOT / ".env")
+
+from fastapi import FastAPI, HTTPException
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
+from fastapi.responses import FileResponse
+from pydantic import BaseModel
+
+from chatbot.main import ChatbotRunner
+
+
+# ──────────────────────────────────────────────
+# Pydantic Models
+# ──────────────────────────────────────────────
+class ChatRequest(BaseModel):
+    question: str
+    llm_provider: Optional[str] = None  # Override LLM nếu cần
+
+
+class ChatResponse(BaseModel):
+    answer: str
+    sources: list[dict]
+    response_time: float
+    num_docs_retrieved: int
+    num_docs_graded: int
+
+
+class HealthResponse(BaseModel):
+    status: str
+    llm_provider: str
+    vector_store: str
+    model_loaded: bool
+
+
+# ──────────────────────────────────────────────
+# Global state
+# ──────────────────────────────────────────────
+VECTOR_STORE_PATH = str(PROJECT_ROOT / "chroma_economy_db")
+DEFAULT_LLM = os.getenv("DEFAULT_LLM", "openai")
+
+chatbot_instance: ChatbotRunner = None
+is_ready = False
+
+
+def get_chatbot() -> ChatbotRunner:
+    """Lấy chatbot instance, khởi tạo nếu chưa có."""
+    global chatbot_instance, is_ready
+    if chatbot_instance is None:
+        raise HTTPException(status_code=503, detail="Chatbot đang khởi tạo, vui lòng thử lại sau.")
+    return chatbot_instance
+
+
+from contextlib import asynccontextmanager
+
+
+@asynccontextmanager
+async def lifespan(app):
+    """Khởi tạo chatbot khi server start."""
+    global chatbot_instance, is_ready
+
+    print("🚀 Đang khởi tạo Chatbot Server...")
+
+    if not os.path.exists(VECTOR_STORE_PATH):
+        print(f"❌ Vector store không tìm thấy tại: {VECTOR_STORE_PATH}")
+        print("💡 Chạy: python ingestion/vector_data_builder.py")
+    else:
+        try:
+            chatbot_instance = ChatbotRunner(
+                path_vector_store=VECTOR_STORE_PATH,
+                llm_provider=DEFAULT_LLM,
+            )
+            is_ready = True
+            print(f"✅ Chatbot đã sẵn sàng! LLM: {DEFAULT_LLM}")
+        except Exception as e:
+            print(f"❌ Lỗi khởi tạo chatbot: {e}")
+
+    yield  # Server đang chạy
+
+    print("👋 Shutting down server...")
+
+
+# ──────────────────────────────────────────────
+# FastAPI App
+# ──────────────────────────────────────────────
+app = FastAPI(
+    title="Chatbot Kinh Tế Việt Nam API",
+    description="API cho hệ thống RAG Chatbot sử dụng Energy-Based Distance Retriever",
+    version="1.0.0",
+    lifespan=lifespan,
+)
+
+# CORS - cho phép frontend gọi API
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+
+# ──────────────────────────────────────────────
+# API Endpoints
+# ──────────────────────────────────────────────
+@app.get("/api/health", response_model=HealthResponse, tags=["System"])
+async def health_check():
+    """Kiểm tra trạng thái server."""
+    return HealthResponse(
+        status="ready" if is_ready else "initializing",
+        llm_provider=DEFAULT_LLM,
+        vector_store=VECTOR_STORE_PATH,
+        model_loaded=is_ready,
+    )
+
+
+@app.post("/api/chat", response_model=ChatResponse, tags=["Chat"])
+async def chat(request: ChatRequest):
+    """
+    Gửi câu hỏi và nhận câu trả lời từ chatbot.
+
+    - **question**: Câu hỏi về kinh tế Việt Nam
+    """
+    bot = get_chatbot()
+
+    if not request.question.strip():
+        raise HTTPException(status_code=400, detail="Câu hỏi không được để trống.")
+
+    start_time = time.time()
+
+    try:
+        # Chuẩn bị input state
+        input_state = {
+            "question": request.question,
+            "generation": "",
+            "documents": [],
+            "prompt": "",
+        }
+
+        # Chạy workflow
+        output_state = bot.compiled_workflow.invoke(input_state)
+
+        elapsed = time.time() - start_time
+        answer = output_state.get("generation", "❌ Không thể tạo câu trả lời.")
+        docs = output_state.get("documents", [])
+
+        # Format sources
+        sources = []
+        for doc in docs:
+            sources.append({
+                "content": doc.page_content[:500],
+                "source": doc.metadata.get("source", "Không rõ nguồn"),
+                "full_content": doc.page_content,
+            })
+
+        return ChatResponse(
+            answer=answer,
+            sources=sources,
+            response_time=round(elapsed, 2),
+            num_docs_retrieved=len(output_state.get("documents", [])),
+            num_docs_graded=len(docs),
+        )
+
+    except Exception as e:
+        elapsed = time.time() - start_time
+        raise HTTPException(status_code=500, detail=f"Lỗi xử lý: {str(e)}")
+
+
+# ──────────────────────────────────────────────
+# Serve Frontend (static files)
+# ──────────────────────────────────────────────
+FRONTEND_DIR = PROJECT_ROOT / "frontend"
+
+if FRONTEND_DIR.exists():
+    app.mount("/static", StaticFiles(directory=str(FRONTEND_DIR)), name="static")
+
+    @app.get("/", tags=["Frontend"])
+    async def serve_frontend():
+        """Serve trang chủ frontend."""
+        return FileResponse(str(FRONTEND_DIR / "index.html"))
+
+
+# ──────────────────────────────────────────────
+# Run Server
+# ──────────────────────────────────────────────
+if __name__ == "__main__":
+    import uvicorn
+
+    port = int(os.getenv("PORT", 8001))
+    print(f"🌐 Starting server on http://0.0.0.0:{port}")
+    print(f"📖 API Docs: http://localhost:{port}/docs")
+
+    uvicorn.run(
+        "chatbot.services.server:app",
+        host="0.0.0.0",
+        port=port,
+        reload=False,
+        workers=1,  # 1 worker vì model embedding dùng chung
+    )

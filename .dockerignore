@@ -1,0 +1,45 @@
+# Git
+.git
+.gitignore
+
+# Python
+__pycache__
+*.pyc
+*.pyo
+*.egg-info
+.eggs
+
+# Virtual envs
+chatbot_env/
+venv/
+.venv/
+*.egg
+
+# IDE
+.vscode
+.idea
+
+# Notebooks
+*.ipynb
+.ipynb_checkpoints
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Scoring / Evaluation (không cần trong production)
+scoring/
+Evaluate/
+
+# Dataset gốc (đã được ingest vào chroma_economy_db)
+Dataset_economy/
+
+# Docs
+*.md
+!README_CHATBOT.md
+
+# Streamlit (dùng FastAPI thay thế)
+streamlit_app.py
+
+# Misc
+energy_base_distance.ipynb

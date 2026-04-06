@@ -26,3 +26,10 @@ scipy>=1.11.4
 # Optional: For other embeddings and utilities
 pydantic>=2.0.0
 python-dotenv>=1.0.0
+
+# Frontend
+streamlit>=1.30.0
+
+# API Server
+fastapi>=0.100.0
+uvicorn[standard]>=0.23.0

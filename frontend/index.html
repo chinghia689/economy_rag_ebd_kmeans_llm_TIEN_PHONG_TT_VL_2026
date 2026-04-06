@@ -1,0 +1,156 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="description" content="Chatbot Kinh Tế Việt Nam - Hệ thống hỏi đáp thông minh sử dụng RAG với Energy-Based Distance">
+    <title>Chatbot Kinh Tế Việt Nam</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="/static/styles.css">
+    <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🇻🇳</text></svg>">
+</head>
+<body>
+    <!-- ── Background Effects ── -->
+    <div class="bg-gradient"></div>
+    <div class="bg-grid"></div>
+
+    <!-- ── Main Layout ── -->
+    <div class="app-container">
+
+        <!-- ── Sidebar ── -->
+        <aside class="sidebar" id="sidebar">
+            <div class="sidebar-header">
+                <div class="logo">
+                    <span class="logo-icon">🤖</span>
+                    <div>
+                        <h2>Kinh Tế Bot</h2>
+                        <span class="version-badge">v1.0</span>
+                    </div>
+                </div>
+            </div>
+
+            <div class="sidebar-content">
+                <!-- Status -->
+                <div class="sidebar-section">
+                    <div class="section-label">Trạng thái</div>
+                    <div class="status-card" id="statusCard">
+                        <div class="status-dot" id="statusDot"></div>
+                        <span id="statusText">Đang kết nối...</span>
+                    </div>
+                </div>
+
+                <!-- Stats -->
+                <div class="sidebar-section">
+                    <div class="section-label">Thống Kê Phiên</div>
+                    <div class="stats-grid">
+                        <div class="stat-item">
+                            <div class="stat-value" id="statQuestions">0</div>
+                            <div class="stat-label">Câu hỏi</div>
+                        </div>
+                        <div class="stat-item">
+                            <div class="stat-value" id="statAvgTime">0s</div>
+                            <div class="stat-label">TB Response</div>
+                        </div>
+                        <div class="stat-item">
+                            <div class="stat-value" id="statDocs">0</div>
+                            <div class="stat-label">Tài liệu</div>
+                        </div>
+                        <div class="stat-item">
+                            <div class="stat-value" id="statLLM">-</div>
+                            <div class="stat-label">LLM</div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Pipeline Info -->
+                <div class="sidebar-section">
+                    <div class="section-label">🔧 Pipeline</div>
+                    <div class="pipeline-info">
+                        <div class="pipeline-row">
+                            <span>Embedding</span>
+                            <span class="badge badge-blue">E5-base</span>
+                        </div>
+                        <div class="pipeline-row">
+                            <span>Retrieval</span>
+                            <span class="badge badge-green">Energy Distance</span>
+                        </div>
+                        <div class="pipeline-row">
+                            <span>Cosine Top-K</span>
+                            <span class="badge badge-amber">40 docs</span>
+                        </div>
+                        <div class="pipeline-row">
+                            <span>Clustering</span>
+                            <span class="badge badge-blue">K-Means (auto)</span>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Sidebar Footer -->
+            <div class="sidebar-footer">
+                <button class="btn-clear" id="btnClear" onclick="clearChat()">
+                    <span>🗑️</span> Xóa lịch sử
+                </button>
+            </div>
+        </aside>
+
+        <!-- ── Main Chat Area ── -->
+        <main class="chat-main">
+            <!-- Top Bar -->
+            <div class="topbar">
+                <button class="btn-menu" id="btnMenu" onclick="toggleSidebar()">
+                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="12" x2="21" y2="12"/><line x1="3" y1="18" x2="21" y2="18"/></svg>
+                </button>
+                <div class="topbar-title">
+                    <h1>Chatbot Kinh Tế Việt Nam</h1>
+                    <p>RAG + Energy-Based Distance Retriever</p>
+                </div>
+                <div class="topbar-actions">
+                    <div class="llm-indicator" id="llmIndicator">
+                        <span class="llm-dot"></span>
+                        <span id="llmName">OpenAI</span>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Chat Messages -->
+            <div class="chat-messages" id="chatMessages">
+                <!-- Welcome Message -->
+                <div class="welcome-screen" id="welcomeScreen">
+                    <div class="welcome-icon">🇻🇳</div>
+                    <h2>Xin chào! Tôi là Chatbot Kinh Tế</h2>
+                    <p>Hỏi tôi bất kỳ câu hỏi nào về kinh tế Việt Nam.<br>Tôi sẽ tìm kiếm trong cơ sở dữ liệu và trả lời cho bạn.</p>
+                    <div class="suggestion-chips">
+                        <button class="chip" onclick="askSuggestion(this)">GDP Việt Nam tăng trưởng như thế nào?</button>
+                        <button class="chip" onclick="askSuggestion(this)">Chính sách tài khóa là gì?</button>
+                        <button class="chip" onclick="askSuggestion(this)">Tình hình xuất nhập khẩu Việt Nam?</button>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Input Area -->
+            <div class="chat-input-area">
+                <div class="input-wrapper">
+                    <textarea
+                        id="chatInput"
+                        placeholder="Nhập câu hỏi về kinh tế Việt Nam..."
+                        rows="1"
+                        onkeydown="handleKeyDown(event)"
+                        oninput="autoResize(this)"
+                    ></textarea>
+                    <button class="btn-send" id="btnSend" onclick="sendMessage()">
+                        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg>
+                    </button>
+                </div>
+                <div class="input-footer">
+                    Chatbot có thể mắc lỗi. Hãy kiểm tra lại thông tin quan trọng.
+                </div>
+            </div>
+        </main>
+    </div>
+
+    <script src="/static/script.js"></script>
+</body>
+</html>

@@ -10,6 +10,7 @@ Một ứng dụng chatbot sử dụng:
 
 import os
 import sys
+import argparse
 from pathlib import Path
 from dotenv import load_dotenv
 
@@ -138,9 +139,16 @@ def main():
     """
     Hàm main - điểm bắt đầu chương trình.
     """
-    # Cấu hình mặc định
-    VECTOR_STORE_PATH = "./chroma_economy_db"  # Thay đổi theo đường dẫn thực tế
-    LLM_PROVIDER = "openai"  # options: gemini, groq (groq miễn phí, rate limit cao)
+    # Parse arguments TRƯỚC khi khởi tạo ChatbotRunner
+    parser = argparse.ArgumentParser(description="Chatbot RAG Demo")
+    parser.add_argument("--question", type=str, help="Câu hỏi trực tiếp (không cần interactive)")
+    parser.add_argument("--llm", type=str, default="openai", help="LLM provider (openai, gemini, groq)")
+    args = parser.parse_args()
+
+    # Cấu hình đường dẫn dựa trên vị trí file (không phụ thuộc cwd)
+    PROJECT_ROOT = Path(__file__).parent.parent
+    VECTOR_STORE_PATH = str(PROJECT_ROOT / "chroma_economy_db")
+    LLM_PROVIDER = args.llm  # Sử dụng argument từ CLI
 
     # Kiểm tra xem vector store có tồn tại không
     if not os.path.exists(VECTOR_STORE_PATH):
@@ -148,20 +156,13 @@ def main():
         print(f"💡 Vui lòng chạy ingestion trước bằng: python ingestion/vector_data_builder.py")
         sys.exit(1)
 
-    print("🚀 Đang khởi tạo chatbot...")
+    print(f"🚀 Đang khởi tạo chatbot với LLM: {LLM_PROVIDER}...")
 
     # Khởi tạo chatbot runner
     chatbot = ChatbotRunner(
         path_vector_store=VECTOR_STORE_PATH,
         llm_provider=LLM_PROVIDER
     )
-
-    # Demo nhanh hoặc chế độ interactive
-    import argparse
-    parser = argparse.ArgumentParser(description="Chatbot RAG Demo")
-    parser.add_argument("--question", type=str, help="Câu hỏi trực tiếp (không cần interactive)")
-    parser.add_argument("--llm", type=str, default="gemini", help="LLM provider (gemini, openai, local, grok)")
-    args = parser.parse_args()
 
     # Nếu có câu hỏi trực tiếp
     if args.question:
