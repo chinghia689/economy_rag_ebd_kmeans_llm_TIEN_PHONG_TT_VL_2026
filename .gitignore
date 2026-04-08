@@ -8,7 +8,7 @@ Dataset_economy/
 
 # ========== ChromaDB database (rất nặng) ==========
 chroma_economy_db/
-chroma_cosine/
+chroma_ms_marco_db/
 chroma_db/
 *.sqlite3
 **/data_level0.bin

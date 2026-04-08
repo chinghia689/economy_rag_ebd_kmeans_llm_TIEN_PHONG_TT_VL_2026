@@ -34,60 +34,81 @@ def _build_filename_index(dataset_dir: str) -> dict:
             index[fname] = fpath
     return index
 
+# load 1000 câu hỏi từ file excel
+# def load_questions_from_excel(
+#     excel_path: str,
+#     dataset_dir: str,
+#     max_questions: int = None,
+# ) -> list:
+#     """
+#     Đọc file Excel 1000 câu hỏi và resolve contexts_ground_truth
+#     từ tên file .txt thành nội dung text đầy đủ.
 
-def load_questions_from_excel(
-    excel_path: str,
-    dataset_dir: str,
-    max_questions: int = None,
-) -> list:
-    """
-    Đọc file Excel 1000 câu hỏi và resolve contexts_ground_truth
-    từ tên file .txt thành nội dung text đầy đủ.
+#     Args:
+#         excel_path:  Đường dẫn file Excel (vd: scoring/file 1000 cau hoi.xlsx)
+#         dataset_dir: Thư mục chứa các file .txt (vd: Dataset_economy/)
+#         max_questions: Giới hạn số câu hỏi (None = lấy tất cả)
 
-    Args:
-        excel_path:  Đường dẫn file Excel (vd: scoring/file 1000 cau hoi.xlsx)
-        dataset_dir: Thư mục chứa các file .txt (vd: Dataset_economy/)
-        max_questions: Giới hạn số câu hỏi (None = lấy tất cả)
+#     Returns:
+#         list[dict]: Danh sách dict với keys: question, ground_truth, contexts_ground_truth
+#     """
+#     df = pd.read_excel(excel_path)
+#     if max_questions:
+#         df = df.head(max_questions)
 
-    Returns:
-        list[dict]: Danh sách dict với keys: question, ground_truth, contexts_ground_truth
-    """
+#     print(f"📂 Đang xây dựng index file .txt từ {dataset_dir}...")
+#     file_index = _build_filename_index(dataset_dir)
+#     print(f"   → Tìm thấy {len(file_index)} file .txt duy nhất")
+
+#     results = []
+#     not_found = 0
+
+#     for _, row in df.iterrows():
+#         question = str(row["question"]).strip()
+#         ground_truth = str(row["ground_truth"]).strip()
+#         ctx_filename = str(row["contexts_ground_truth"]).strip()
+
+#         # Resolve filename → nội dung text
+#         contexts_text = ""
+#         if ctx_filename in file_index:
+#             try:
+#                 with open(file_index[ctx_filename], "r", encoding="utf-8") as f:
+#                     contexts_text = f.read().strip()
+#             except Exception as e:
+#                 print(f"   ⚠️ Lỗi đọc file {ctx_filename}: {e}")
+#         else:
+#             not_found += 1
+
+#         results.append({
+#             "question": question,
+#             "ground_truth": ground_truth,
+#             "contexts_ground_truth": contexts_text,
+#         })
+
+#     if not_found:
+#         print(f"   ⚠️ {not_found}/{len(df)} file .txt không tìm thấy trong {dataset_dir}")
+#     print(f"✅ Đã load {len(results)} câu hỏi từ {excel_path}")
+
+#     return results
+
+# load dataset_ms_marco
+    
+def load_questions_from_excel(excel_path, max_questions=None):
     df = pd.read_excel(excel_path)
+
     if max_questions:
         df = df.head(max_questions)
 
-    print(f"📂 Đang xây dựng index file .txt từ {dataset_dir}...")
-    file_index = _build_filename_index(dataset_dir)
-    print(f"   → Tìm thấy {len(file_index)} file .txt duy nhất")
-
     results = []
-    not_found = 0
 
     for _, row in df.iterrows():
-        question = str(row["question"]).strip()
-        ground_truth = str(row["ground_truth"]).strip()
-        ctx_filename = str(row["contexts_ground_truth"]).strip()
-
-        # Resolve filename → nội dung text
-        contexts_text = ""
-        if ctx_filename in file_index:
-            try:
-                with open(file_index[ctx_filename], "r", encoding="utf-8") as f:
-                    contexts_text = f.read().strip()
-            except Exception as e:
-                print(f"   ⚠️ Lỗi đọc file {ctx_filename}: {e}")
-        else:
-            not_found += 1
-
         results.append({
-            "question": question,
-            "ground_truth": ground_truth,
-            "contexts_ground_truth": contexts_text,
+            "question": str(row["question"]).strip(),
+            "ground_truth": str(row["ground_truth"]).strip(),
+            "contexts_ground_truth": str(row["contexts_ground_truth"]).strip()
         })
 
-    if not_found:
-        print(f"   ⚠️ {not_found}/{len(df)} file .txt không tìm thấy trong {dataset_dir}")
-    print(f"✅ Đã load {len(results)} câu hỏi từ {excel_path}")
+    print(f"✅ Loaded {len(results)} questions")
 
     return results
 
@@ -110,7 +131,9 @@ def create_evaluation_file(questions: list, output_file: str = "eval_data.xlsx",
     # Khởi tạo chatbot
     print("🚀 Đang khởi tạo chatbot...")
     chatbot = ChatbotRunner(
-        path_vector_store="./chroma_economy_db",
+        # path_vector_store="./chroma_economy_db",
+        path_vector_store="./chroma_ms_marco_db",
+        # path_vector_store="./chroma_finqa_db",
         llm_provider="openai"
     )
     
@@ -192,14 +215,17 @@ if __name__ == "__main__":
 
     if args.source == "excel":
         # === LOAD TỪ FILE 1000 CÂU HỎI ===
-        excel_path = os.path.join(os.path.dirname(__file__), "file 1000 cau hoi.xlsx")
+        # excel_path = os.path.join(os.path.dirname(__file__), "file 1000 cau hoi.xlsx")
+        excel_path = os.path.join(os.path.dirname(__file__), "ms_marco_eval.xlsx")
+        # excel_path = os.path.join(os.path.dirname(__file__), "finqa_eval.xlsx")
         dataset_dir = os.path.join(project_root, "Dataset_economy")
 
         if not os.path.exists(excel_path):
             print(f"❌ Không tìm thấy file: {excel_path}")
             sys.exit(1)
 
-        qa_list = load_questions_from_excel(excel_path, dataset_dir, max_questions=args.max)
+        # qa_list = load_questions_from_excel(excel_path, dataset_dir, max_questions=args.max)
+        qa_list = load_questions_from_excel(excel_path,max_questions=args.max)
 
         questions = [q["question"] for q in qa_list]
         ground_truths = {q["question"]: q["ground_truth"] for q in qa_list}

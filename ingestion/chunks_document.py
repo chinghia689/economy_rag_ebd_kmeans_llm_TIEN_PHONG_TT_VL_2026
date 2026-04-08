@@ -47,22 +47,27 @@ class ChromaDBManager:
         print(f"✂️ Đang cắt {len(raw_documents)} văn bản gốc...")
         
         # 1. Cấu hình Splitter
-        text_splitter = RecursiveCharacterTextSplitter(
-            chunk_size=chunk_size,
-            chunk_overlap=chunk_overlap,
-            separators=['\n\n', '\n']
-        )
-        
+        if chunk_size is None:
+            doc_splits = raw_documents
+            print(f"⚠️ Không chunking → giữ nguyên {len(doc_splits)} passages")
+        else:
+            text_splitter = RecursiveCharacterTextSplitter(
+                chunk_size=chunk_size,
+                chunk_overlap=chunk_overlap,
+                separators=['\n\n', '\n']
+            )        
         # Cắt thành các chunk nhỏ
-        doc_splits = text_splitter.split_documents(raw_documents)
-        print(f"✅ Đã cắt thành {len(doc_splits)} chunks nhỏ.")
+            doc_splits = text_splitter.split_documents(raw_documents)
+            print(f"✅ Đã cắt thành {len(doc_splits)} chunks nhỏ.")
 
         # === DEDUPLICATION: Loại bỏ chunks trùng nội dung ===
         seen_hashes = set()
         unique_splits = []
         for doc in doc_splits:
+            content = doc.page_content.strip()
+            label = str(doc.metadata.get("is_relevant", "NA"))
             content_hash = hashlib.md5(
-                doc.page_content.strip().encode("utf-8")
+                (content + label).encode("utf-8")
             ).hexdigest()
             if content_hash not in seen_hashes:
                 seen_hashes.add(content_hash)

@@ -23,3 +23,15 @@ class CustomPrompt:
 
     Nhớ kỹ: Output phải là nguyên một câu văn hoàn chỉnh được copy y hệt từ Ngữ cảnh, chọn câu có chứa nhiều từ khóa của câu hỏi nhất.
     """
+
+    # prompt cho bài toán ngắn gọn
+#     GENERATE_ANSWER_PROMPT = """
+# Bạn là một công cụ TRÍCH XUẤT THÔNG TIN từ Ngữ cảnh.
+# Nhiệm vụ: Trả lời câu hỏi dựa TRỰC TIẾP vào Ngữ cảnh được cung cấp.
+
+# TUÂN THỦ CÁC QUY TẮC SAU ĐỂ ĐẠT ĐIỂM TỐI ĐA:
+# 1. SIÊU NGẮN GỌN: Chỉ trả về ĐÚNG CỤM TỪ, CON SỐ, hoặc TỪ KHÓA chứa thông tin trả lời. 
+# 2. KHÔNG VIẾT THÀNH CÂU: Tuyệt đối không thêm chủ ngữ, vị ngữ, hay các từ đệm như "Câu trả lời là", "Ngữ cảnh cho thấy".
+# 3. COPY CHÍNH XÁC: Nếu đáp án có trong ngữ cảnh, hãy copy nguyên văn cụm từ đó ra, không tự diễn đạt lại.
+# 4. Nếu không tìm thấy thông tin, chỉ trả về chữ: None.
+# """
