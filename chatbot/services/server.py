@@ -20,13 +20,15 @@ PROJECT_ROOT = Path(__file__).parent.parent.parent
 sys.path.insert(0, str(PROJECT_ROOT))
 load_dotenv(PROJECT_ROOT / ".env")
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Header
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse
 from pydantic import BaseModel
 
 from chatbot.main import ChatbotRunner
+from chatbot.utils.base_db import UserDB
+from chatbot.utils.jwt_utils import verify_jwt_token
 
 
 # ──────────────────────────────────────────────
@@ -50,6 +52,23 @@ class HealthResponse(BaseModel):
     llm_provider: str
     vector_store: str
     model_loaded: bool
+
+
+# ──────────────────────────────────────────────
+# Helper: Lấy user email từ JWT token
+# ──────────────────────────────────────────────
+def get_user_email_from_token(authorization: str = None) -> str | None:
+    """Trích xuất email từ Authorization header (Bearer token)."""
+    if not authorization:
+        return None
+    try:
+        token = authorization.replace("Bearer ", "")
+        payload = verify_jwt_token(token)
+        if payload:
+            return payload.get("email")
+    except Exception:
+        pass
+    return None
 
 
 # ──────────────────────────────────────────────
@@ -118,6 +137,12 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+# ──────────────────────────────────────────────
+# Auth Router
+# ──────────────────────────────────────────────
+from chatbot.services.auth import router as auth_router
+app.include_router(auth_router, prefix="/api/v1")
+
 
 # ──────────────────────────────────────────────
 # API Endpoints
@@ -134,9 +159,10 @@ async def health_check():
 
 
 @app.post("/api/chat", response_model=ChatResponse, tags=["Chat"])
-async def chat(request: ChatRequest):
+async def chat(request: ChatRequest, authorization: str = Header(default=None)):
     """
     Gửi câu hỏi và nhận câu trả lời từ chatbot.
+    Tự động lưu lịch sử nếu user đã đăng nhập (có JWT token).
 
     - **question**: Câu hỏi về kinh tế Việt Nam
     """
@@ -144,6 +170,9 @@ async def chat(request: ChatRequest):
 
     if not request.question.strip():
         raise HTTPException(status_code=400, detail="Câu hỏi không được để trống.")
+
+    # Lấy email từ token (nếu có)
+    user_email = get_user_email_from_token(authorization)
 
     start_time = time.time()
 
@@ -172,6 +201,25 @@ async def chat(request: ChatRequest):
                 "full_content": doc.page_content,
             })
 
+        # ── Lưu lịch sử chat vào DB ──
+        if user_email:
+            with UserDB() as db:
+                # Lưu câu hỏi của user
+                db.save_chat_message(
+                    user_email=user_email,
+                    role="user",
+                    content=request.question,
+                )
+                # Lưu câu trả lời của bot
+                db.save_chat_message(
+                    user_email=user_email,
+                    role="bot",
+                    content=answer,
+                    sources=sources,
+                    response_time=round(elapsed, 2),
+                    num_docs=len(docs),
+                )
+
         return ChatResponse(
             answer=answer,
             sources=sources,
@@ -183,6 +231,50 @@ async def chat(request: ChatRequest):
     except Exception as e:
         elapsed = time.time() - start_time
         raise HTTPException(status_code=500, detail=f"Lỗi xử lý: {str(e)}")
+
+
+# ──────────────────────────────────────────────
+# Chat History Endpoints
+# ──────────────────────────────────────────────
+@app.get("/api/chat/history", tags=["Chat History"])
+async def get_chat_history(
+    limit: int = 100,
+    offset: int = 0,
+    authorization: str = Header(default=None),
+):
+    """
+    Lấy lịch sử chat của user đang đăng nhập.
+    Yêu cầu JWT token trong Authorization header.
+    """
+    user_email = get_user_email_from_token(authorization)
+    if not user_email:
+        raise HTTPException(status_code=401, detail="Chưa đăng nhập.")
+
+    with UserDB() as db:
+        messages = db.get_chat_history(user_email, limit=limit, offset=offset)
+        total = db.get_chat_message_count(user_email)
+
+    return {
+        "messages": messages,
+        "total": total,
+        "user_email": user_email,
+    }
+
+
+@app.delete("/api/chat/history", tags=["Chat History"])
+async def clear_chat_history(authorization: str = Header(default=None)):
+    """
+    Xóa toàn bộ lịch sử chat của user đang đăng nhập.
+    Yêu cầu JWT token trong Authorization header.
+    """
+    user_email = get_user_email_from_token(authorization)
+    if not user_email:
+        raise HTTPException(status_code=401, detail="Chưa đăng nhập.")
+
+    with UserDB() as db:
+        deleted = db.clear_chat_history(user_email)
+
+    return {"deleted": deleted, "user_email": user_email}
 
 
 # ──────────────────────────────────────────────

@@ -60,3 +60,8 @@ logs/
 *.tar.gz
 *.rar
 *.7z
+# ========== Local Environments ==========
+.conda/
+
+# ========== Local Database (Auth & Chat) ==========
+chatbot/data/login_sessions.db

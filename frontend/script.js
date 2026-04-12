@@ -2,6 +2,7 @@
  * 🤖 Chatbot Kinh Tế Việt Nam — Frontend Logic
  *
  * Handles:
+ *  - Google OAuth 2.0 login with Cloud-Sync Polling
  *  - Chat message send/receive via API
  *  - Message rendering with sources
  *  - Session stats tracking
@@ -22,6 +23,11 @@ const state = {
     totalDocs: 0,
     llmProvider: "-",
     isOnline: false,
+    // Auth state
+    isLoggedIn: false,
+    user: null,
+    token: null,
+    pollInterval: null,
 };
 
 // ──────────────────────────────────────────────
@@ -41,9 +47,262 @@ const statDocs = document.getElementById("statDocs");
 const statLLM = document.getElementById("statLLM");
 const llmName = document.getElementById("llmName");
 
-// ──────────────────────────────────────────────
-// Health Check
-// ──────────────────────────────────────────────
+// Auth elements
+const loginOverlay = document.getElementById("loginOverlay");
+const appContainer = document.getElementById("appContainer");
+const btnGoogleLogin = document.getElementById("btnGoogleLogin");
+const loginPolling = document.getElementById("loginPolling");
+const userProfileSection = document.getElementById("userProfileSection");
+const userAvatar = document.getElementById("userAvatar");
+const userName = document.getElementById("userName");
+const userEmail = document.getElementById("userEmail");
+
+// ══════════════════════════════════════════════
+// AUTHENTICATION
+// ══════════════════════════════════════════════
+
+/**
+ * Initialize auth state on page load.
+ * Check localStorage for existing token and verify it.
+ */
+async function initAuth() {
+    const savedToken = localStorage.getItem("auth_token");
+    const savedUser = localStorage.getItem("auth_user");
+
+    if (savedToken && savedUser) {
+        try {
+            // Verify token with backend
+            const formData = new FormData();
+            formData.append("token", savedToken);
+
+            const res = await fetch(`${API_BASE}/api/v1/auth/verify`, {
+                method: "POST",
+                body: formData,
+            });
+
+            if (res.ok) {
+                const data = await res.json();
+                state.token = savedToken;
+                state.user = data.user || JSON.parse(savedUser);
+                state.isLoggedIn = true;
+                showApp();
+                return;
+            }
+        } catch (e) {
+            console.warn("Token verification failed:", e);
+        }
+
+        // Token invalid, clear storage
+        localStorage.removeItem("auth_token");
+        localStorage.removeItem("auth_user");
+    }
+
+    // Not logged in, show login screen
+    showLogin();
+}
+
+/**
+ * Show login screen, hide app.
+ */
+function showLogin() {
+    loginOverlay.style.display = "flex";
+    appContainer.style.display = "none";
+    state.isLoggedIn = false;
+}
+
+/**
+ * Show app, hide login screen.
+ */
+function showApp() {
+    loginOverlay.style.display = "none";
+    appContainer.style.display = "flex";
+
+    // Update user profile in sidebar
+    if (state.user) {
+        userProfileSection.style.display = "block";
+        userName.textContent = state.user.name || "Người dùng";
+        userEmail.textContent = state.user.email || "";
+
+        if (state.user.picture) {
+            userAvatar.src = state.user.picture;
+            userAvatar.style.display = "block";
+        } else {
+            userAvatar.style.display = "none";
+        }
+    }
+
+    // Load lịch sử chat từ DB
+    loadChatHistory();
+
+    // Focus chat input
+    if (chatInput) chatInput.focus();
+}
+
+/**
+ * Load lịch sử chat của user từ database.
+ */
+async function loadChatHistory() {
+    if (!state.token) return;
+
+    try {
+        const res = await fetch(`${API_BASE}/api/chat/history`, {
+            headers: { "Authorization": `Bearer ${state.token}` },
+        });
+
+        if (!res.ok) return;
+
+        const data = await res.json();
+
+        if (data.messages && data.messages.length > 0) {
+            // Ẩn welcome screen
+            if (welcomeScreen) welcomeScreen.style.display = "none";
+
+            // Render từng tin nhắn
+            data.messages.forEach((msg) => {
+                if (msg.role === "user") {
+                    addMessage("user", msg.content);
+                } else {
+                    addMessage("bot", msg.content, {
+                        time: msg.response_time,
+                        docsCount: msg.num_docs,
+                        sources: msg.sources || [],
+                    });
+                }
+            });
+
+            // Cập nhật stats
+            const botMessages = data.messages.filter(m => m.role === "bot");
+            state.totalQuestions = botMessages.length;
+            state.totalTime = botMessages.reduce((sum, m) => sum + (m.response_time || 0), 0);
+            state.totalDocs = botMessages.reduce((sum, m) => sum + (m.num_docs || 0), 0);
+            updateStats();
+        }
+    } catch (e) {
+        console.warn("Could not load chat history:", e);
+    }
+}
+
+/**
+ * Handle Google login button click.
+ * Implements Cloud-Sync Polling flow.
+ */
+async function handleGoogleLogin() {
+    const sessionId = crypto.randomUUID();
+
+    // Show polling state
+    btnGoogleLogin.style.display = "none";
+    loginPolling.style.display = "flex";
+
+    try {
+        // 1. Create login session on server
+        const formData = new FormData();
+        formData.append("session_id", sessionId);
+
+        const createRes = await fetch(`${API_BASE}/api/v1/auth/login-session`, {
+            method: "POST",
+            body: formData,
+        });
+
+        if (!createRes.ok) {
+            throw new Error("Không thể tạo phiên đăng nhập.");
+        }
+
+        // 2. Start polling for session status
+        state.pollInterval = setInterval(async () => {
+            try {
+                const res = await fetch(`${API_BASE}/api/v1/auth/login-session/${sessionId}`);
+                if (!res.ok) return;
+
+                const data = await res.json();
+
+                if (data.status === "completed" && data.token) {
+                    // Login successful!
+                    clearInterval(state.pollInterval);
+                    state.pollInterval = null;
+
+                    onLoginSuccess(data.user, data.token);
+                }
+            } catch (pollErr) {
+                console.warn("Polling error:", pollErr);
+            }
+        }, 2000);
+
+        // 3. Open Google OAuth in new tab/window or via Flutter Bridge
+        const loginUrl = `${API_BASE}/api/v1/auth/google/login/flutter?session_id=${sessionId}`;
+
+        if (window.FlutterBridge) {
+            // Running inside Flutter WebView
+            window.FlutterBridge.postMessage(`GOOGLE_LOGIN:${sessionId}`);
+        } else {
+            // Running in desktop browser — open in new tab
+            window.open(loginUrl, "_blank", "width=500,height=700,left=200,top=100");
+        }
+
+        // 4. Set timeout (10 minutes)
+        setTimeout(() => {
+            if (state.pollInterval) {
+                cancelPolling();
+                alert("Phiên đăng nhập đã hết hạn. Vui lòng thử lại.");
+            }
+        }, 10 * 60 * 1000);
+
+    } catch (err) {
+        console.error("Login error:", err);
+        cancelPolling();
+        alert(`Lỗi đăng nhập: ${err.message}`);
+    }
+}
+
+/**
+ * Cancel polling and reset login UI.
+ */
+function cancelPolling() {
+    if (state.pollInterval) {
+        clearInterval(state.pollInterval);
+        state.pollInterval = null;
+    }
+    btnGoogleLogin.style.display = "flex";
+    loginPolling.style.display = "none";
+}
+
+/**
+ * Handle successful login.
+ */
+function onLoginSuccess(user, token) {
+    state.token = token;
+    state.user = user;
+    state.isLoggedIn = true;
+
+    // Persist to localStorage
+    localStorage.setItem("auth_token", token);
+    localStorage.setItem("auth_user", JSON.stringify(user));
+
+    // Show app
+    showApp();
+}
+
+/**
+ * Handle logout.
+ */
+function handleLogout() {
+    state.token = null;
+    state.user = null;
+    state.isLoggedIn = false;
+
+    localStorage.removeItem("auth_token");
+    localStorage.removeItem("auth_user");
+
+    // Reset chat
+    clearChat();
+
+    // Show login
+    showLogin();
+}
+
+// ══════════════════════════════════════════════
+// HEALTH CHECK
+// ══════════════════════════════════════════════
+
 async function checkHealth() {
     try {
         const res = await fetch(`${API_BASE}/api/health`);
@@ -73,9 +332,10 @@ async function checkHealth() {
 checkHealth();
 setInterval(checkHealth, 10000);
 
-// ──────────────────────────────────────────────
-// Update Stats
-// ──────────────────────────────────────────────
+// ══════════════════════════════════════════════
+// CHAT FUNCTIONALITY
+// ══════════════════════════════════════════════
+
 function updateStats() {
     statQuestions.textContent = state.totalQuestions;
     const avg = state.totalQuestions > 0
@@ -84,10 +344,6 @@ function updateStats() {
     statAvgTime.textContent = avg;
     statDocs.textContent = state.totalDocs;
 }
-
-// ──────────────────────────────────────────────
-// Message Rendering
-// ──────────────────────────────────────────────
 
 /**
  * Create a message element and append to chat.
@@ -216,9 +472,14 @@ async function sendMessage() {
     showTyping();
 
     try {
+        const headers = { "Content-Type": "application/json" };
+        if (state.token) {
+            headers["Authorization"] = `Bearer ${state.token}`;
+        }
+
         const res = await fetch(`${API_BASE}/api/chat`, {
             method: "POST",
-            headers: { "Content-Type": "application/json" },
+            headers: headers,
             body: JSON.stringify({ question: text }),
         });
 
@@ -282,7 +543,7 @@ function askSuggestion(chipEl) {
 // ──────────────────────────────────────────────
 // Clear Chat
 // ──────────────────────────────────────────────
-function clearChat() {
+async function clearChat() {
     // Remove all messages except welcome
     const messages = chatMessages.querySelectorAll(".message");
     messages.forEach((m) => m.remove());
@@ -297,6 +558,18 @@ function clearChat() {
     state.totalTime = 0;
     state.totalDocs = 0;
     updateStats();
+
+    // Xóa lịch sử trên server
+    if (state.token) {
+        try {
+            await fetch(`${API_BASE}/api/chat/history`, {
+                method: "DELETE",
+                headers: { "Authorization": `Bearer ${state.token}` },
+            });
+        } catch (e) {
+            console.warn("Could not clear server history:", e);
+        }
+    }
 }
 
 // ──────────────────────────────────────────────
@@ -318,8 +591,8 @@ function toggleSidebar() {
 }
 
 // ──────────────────────────────────────────────
-// Focus input on load
+// Initialize on load
 // ──────────────────────────────────────────────
 window.addEventListener("load", () => {
-    chatInput.focus();
+    initAuth();
 });
