@@ -39,8 +39,9 @@ class VietnameseEmbedding:
     Sử dụng intfloat/multilingual-e5-base — model đa ngôn ngữ mạnh,
     hỗ trợ tiếng Việt tốt hơn vietnamese-sbert trên các benchmark retrieval.
     """
-
-    def __init__(self, model_name='intfloat/multilingual-e5-base', device='cpu'):
+    model_embed = 'intfloat/multilingual-e5-base'
+    model_embed_2 = 'intfloat/e5-base-v2'
+    def __init__(self, model_name=model_embed_2, device='cpu'):
         self.model_name = model_name
 
         # Cấu hình phần cứng

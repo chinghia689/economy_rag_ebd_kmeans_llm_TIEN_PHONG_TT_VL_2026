@@ -9,13 +9,14 @@ Dataset_economy/
 # ========== ChromaDB database (rất nặng) ==========
 chroma_economy_db/
 chroma_ms_marco_db/
+chroma_scifact/
 chroma_db/
 *.sqlite3
 **/data_level0.bin
 **/header.bin
 **/length.bin
 **/link_lists.bin
-
+**/msmarco_embeddings.npy
 # ========== Python cache & bytecode ==========
 __pycache__/
 *.py[cod]
@@ -65,3 +66,4 @@ logs/
 
 # ========== Local Database (Auth & Chat) ==========
 chatbot/data/login_sessions.db
+msmarco_embeddings.npy
