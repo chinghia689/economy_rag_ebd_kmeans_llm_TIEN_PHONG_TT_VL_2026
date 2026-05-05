@@ -1,13 +1,19 @@
 """
-🔐 JWT Token Utilities.
+JWT Token Utilities.
 
 Tạo và xác thực JWT tokens cho hệ thống đăng nhập.
+
+Tham chiếu: docs/DOCS-main/skill_security_authentication.md
 """
 
 import os
 from datetime import datetime, timedelta, timezone
 
 import jwt
+
+from app.logger import get_logger
+
+logger = get_logger(__name__)
 
 # Cấu hình JWT
 JWT_SECRET_KEY = os.getenv("JWT_SECRET_KEY", "chatbot-kinhte-default-secret-change-this")
@@ -50,8 +56,8 @@ def verify_jwt_token(token: str) -> dict | None:
         payload = jwt.decode(token, JWT_SECRET_KEY, algorithms=[JWT_ALGORITHM])
         return payload
     except jwt.ExpiredSignatureError:
-        print("⚠️ Token đã hết hạn.")
+        logger.warning("Token đã hết hạn.")
         return None
     except jwt.InvalidTokenError as e:
-        print(f"⚠️ Token không hợp lệ: {e}")
+        logger.warning(f"Token không hợp lệ: {e}")
         return None

@@ -1,16 +1,25 @@
 """
-🗄️ Database manager cho Login Sessions + Chat History.
+Database manager cho Login Sessions + Chat History.
 
 Quản lý phiên đăng nhập và lịch sử chat qua SQLite:
 - Login Sessions: One-time use, TTL 10 phút, auto-cleanup
 - Chat History: Lưu lịch sử chat theo tài khoản user (email)
+
+Tham chiếu:
+    - docs/DOCS-main/skill_sql_compatibility.md
+    - docs/DOCS-main/skill_security_authentication.md
 """
 
+import hashlib
 import json
 import sqlite3
 import os
 from datetime import datetime, timedelta
 from pathlib import Path
+
+from app.logger import get_logger
+
+logger = get_logger(__name__)
 
 
 # Database file path
@@ -19,6 +28,23 @@ DB_PATH = DB_DIR / "login_sessions.db"
 
 # Session TTL (10 phút)
 SESSION_TTL_MINUTES = 10
+
+
+def get_gravatar_url(email: str) -> str:
+    """
+    Sinh URL Gravatar từ email (Lớp 1 trong Avatar Fallback 3 lớp).
+    Nếu Gravatar không có ảnh, trả về identicon tự sinh.
+
+    Args:
+        email: Email của user.
+
+    Returns:
+        URL ảnh Gravatar hoặc identicon.
+
+    Tham chiếu: docs/DOCS-main/skill_security_authentication.md Mục 2.
+    """
+    email_hash = hashlib.md5(email.strip().lower().encode("utf-8")).hexdigest()
+    return f"https://www.gravatar.com/avatar/{email_hash}?d=identicon"
 
 
 class UserDB:
@@ -44,7 +70,7 @@ class UserDB:
         self._create_tables()
 
     def _create_tables(self):
-        """Tạo bảng login_sessions và chat_messages nếu chưa tồn tại."""
+        """Tạo bảng login_sessions, users và chat_messages nếu chưa tồn tại."""
         self.cursor.execute("""
             CREATE TABLE IF NOT EXISTS login_sessions (
                 session_id TEXT PRIMARY KEY,
@@ -54,6 +80,20 @@ class UserDB:
                 user_name TEXT,
                 user_picture TEXT,
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        """)
+
+        # Bảng users — lưu thông tin user đã đăng nhập
+        self.cursor.execute("""
+            CREATE TABLE IF NOT EXISTS users (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                email TEXT UNIQUE NOT NULL,
+                name TEXT,
+                picture TEXT,
+                gravatar_url TEXT,
+                is_admin INTEGER DEFAULT 0,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                last_login TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             )
         """)
 
@@ -78,9 +118,68 @@ class UserDB:
 
         self.conn.commit()
 
-    # ──────────────────────────────────────────────
+    # ------------------------------------------------------------------
+    # User Management
+    # ------------------------------------------------------------------
+
+    def upsert_user(self, email: str, name: str = None, picture: str = None) -> dict:
+        """
+        Tạo hoặc cập nhật user khi đăng nhập.
+        Tự động sinh Gravatar URL nếu user không có picture.
+
+        Args:
+            email: Email của user.
+            name: Tên hiển thị.
+            picture: URL ảnh avatar từ Google.
+
+        Returns:
+            Dict chứa thông tin user.
+        """
+        gravatar = get_gravatar_url(email)
+        # Nếu không có picture từ Google, dùng Gravatar
+        final_picture = picture or gravatar
+
+        self.cursor.execute("""
+            INSERT INTO users (email, name, picture, gravatar_url, last_login)
+            VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP)
+            ON CONFLICT(email) DO UPDATE SET
+                name = excluded.name,
+                picture = excluded.picture,
+                gravatar_url = excluded.gravatar_url,
+                last_login = CURRENT_TIMESTAMP
+        """, (email, name, final_picture, gravatar))
+        self.conn.commit()
+
+        return self.get_user_by_email(email)
+
+    def get_user_by_email(self, email: str) -> dict | None:
+        """
+        Lấy thông tin user theo email.
+
+        Args:
+            email: Email của user.
+
+        Returns:
+            Dict chứa thông tin user hoặc None.
+        """
+        self.cursor.execute("SELECT * FROM users WHERE email = ?", (email,))
+        row = self.cursor.fetchone()
+        if not row:
+            return None
+        return {
+            "id": row["id"],
+            "email": row["email"],
+            "name": row["name"],
+            "picture": row["picture"],
+            "gravatar_url": row["gravatar_url"],
+            "is_admin": bool(row["is_admin"]),
+            "created_at": row["created_at"],
+            "last_login": row["last_login"],
+        }
+
+    # ------------------------------------------------------------------
     # Login Sessions
-    # ──────────────────────────────────────────────
+    # ------------------------------------------------------------------
 
     def create_login_session(self, session_id: str) -> bool:
         """
@@ -127,7 +226,6 @@ class UserDB:
         # Kiểm tra TTL
         created_at = datetime.fromisoformat(row["created_at"])
         if datetime.utcnow() - created_at > timedelta(minutes=SESSION_TTL_MINUTES):
-            # Session đã hết hạn, xóa
             self.delete_login_session(session_id)
             return None
 
@@ -151,7 +249,8 @@ class UserDB:
                               user_email: str = None, user_name: str = None,
                               user_picture: str = None) -> bool:
         """
-        Cập nhật token và thông tin user vào session (status → 'completed').
+        Cập nhật token và thông tin user vào session (status -> 'completed').
+        Đồng thời upsert user vào bảng users.
 
         Args:
             session_id: UUID của phiên đăng nhập.
@@ -171,6 +270,15 @@ class UserDB:
             (token, user_email, user_name, user_picture, session_id)
         )
         self.conn.commit()
+
+        # Upsert user vào bảng users
+        if user_email:
+            self.upsert_user(
+                email=user_email,
+                name=user_name,
+                picture=user_picture
+            )
+
         return self.cursor.rowcount > 0
 
     def delete_login_session(self, session_id: str) -> bool:
@@ -193,7 +301,6 @@ class UserDB:
     def cleanup_old_sessions(self):
         """
         Xóa tất cả sessions cũ hơn TTL (10 phút).
-
         Được gọi tự động mỗi khi tạo session mới để giữ DB sạch.
         """
         cutoff = (datetime.utcnow() - timedelta(minutes=SESSION_TTL_MINUTES)).isoformat()
@@ -204,11 +311,11 @@ class UserDB:
         deleted = self.cursor.rowcount
         self.conn.commit()
         if deleted > 0:
-            print(f"🧹 Đã dọn dẹp {deleted} session(s) hết hạn.")
+            logger.info(f"Đã dọn dẹp {deleted} session(s) hết hạn.")
 
-    # ──────────────────────────────────────────────
+    # ------------------------------------------------------------------
     # Chat History
-    # ──────────────────────────────────────────────
+    # ------------------------------------------------------------------
 
     def save_chat_message(self, user_email: str, role: str, content: str,
                           sources: list = None, response_time: float = None,
@@ -317,4 +424,3 @@ class UserDB:
 
     def __exit__(self, exc_type, exc_val, exc_tb):
         self.close()
-

@@ -1,12 +1,17 @@
 """
-🔑 Authentication Router — Google OAuth 2.0 + Cloud-Sync Polling.
+Authentication Router - Google OAuth 2.0 + Cloud-Sync Polling.
 
 Endpoints:
-    POST /auth/login-session          → Tạo phiên chờ đăng nhập
-    GET  /auth/login-session/{id}     → Polling kiểm tra trạng thái
-    GET  /auth/google/login/flutter   → Redirect đến Google OAuth
-    GET  /auth/google/callback/flutter → Google callback → JWT → DB
-    POST /auth/verify                 → Xác thực JWT token
+    POST /auth/login-session          - Tạo phiên chờ đăng nhập
+    GET  /auth/login-session/{id}     - Polling kiểm tra trạng thái
+    GET  /auth/google/login/flutter   - Redirect đến Google OAuth
+    GET  /auth/google/callback/flutter - Google callback -> JWT -> DB
+    POST /auth/verify                 - Xác thực JWT token
+
+Tham chiếu:
+    - docs/DOCS-main/skill_hybrid_app_login.md
+    - docs/DOCS-main/skill_google_oauth_redirect.md
+    - docs/DOCS-main/skill_security_authentication.md
 """
 
 import os
@@ -17,12 +22,16 @@ from fastapi.responses import HTMLResponse, RedirectResponse
 
 from chatbot.utils.base_db import UserDB
 from chatbot.utils.jwt_utils import create_jwt_token, verify_jwt_token
+from app.models.schemas import ApiSuccess, ApiError
+from app.logger import get_logger
+
+logger = get_logger(__name__)
 
 router = APIRouter(prefix="/auth", tags=["Authentication"])
 
-# ──────────────────────────────────────────────
+# ------------------------------------------------------------------
 # Google OAuth 2.0 Config
-# ──────────────────────────────────────────────
+# ------------------------------------------------------------------
 GOOGLE_CLIENT_ID = os.getenv("GOOGLE_CLIENT_ID", "")
 GOOGLE_CLIENT_SECRET = os.getenv("GOOGLE_CLIENT_SECRET", "")
 OAUTH_REDIRECT_URI = os.getenv(
@@ -35,9 +44,9 @@ GOOGLE_TOKEN_URL = "https://oauth2.googleapis.com/token"
 GOOGLE_USERINFO_URL = "https://www.googleapis.com/oauth2/v2/userinfo"
 
 
-# ──────────────────────────────────────────────
+# ------------------------------------------------------------------
 # 1. Tạo phiên chờ đăng nhập
-# ──────────────────────────────────────────────
+# ------------------------------------------------------------------
 @router.post("/login-session")
 async def create_login_session(session_id: str = Form(...)):
     """
@@ -47,20 +56,26 @@ async def create_login_session(session_id: str = Form(...)):
     trước khi bắt đầu polling và mở trình duyệt đăng nhập.
     """
     with UserDB() as db:
-        # Dọn dẹp sessions cũ
         db.cleanup_old_sessions()
-
-        # Tạo session mới
         success = db.create_login_session(session_id)
         if not success:
-            raise HTTPException(status_code=409, detail="Session ID đã tồn tại.")
+            raise HTTPException(
+                status_code=409,
+                detail=ApiError(
+                    message="Session ID đã tồn tại.",
+                    error_code="SESSION_CONFLICT"
+                ).model_dump()
+            )
 
-    return {"status": "created", "session_id": session_id}
+    return ApiSuccess(
+        message="Tạo phiên đăng nhập thành công",
+        data={"status": "created", "session_id": session_id}
+    )
 
 
-# ──────────────────────────────────────────────
+# ------------------------------------------------------------------
 # 2. Polling kiểm tra trạng thái đăng nhập
-# ──────────────────────────────────────────────
+# ------------------------------------------------------------------
 @router.get("/login-session/{session_id}")
 async def get_login_session(session_id: str):
     """
@@ -76,7 +91,13 @@ async def get_login_session(session_id: str):
         session = db.get_login_session(session_id)
 
     if not session:
-        raise HTTPException(status_code=404, detail="Session không tồn tại hoặc đã hết hạn.")
+        raise HTTPException(
+            status_code=404,
+            detail=ApiError(
+                message="Session không tồn tại hoặc đã hết hạn.",
+                error_code="SESSION_NOT_FOUND"
+            ).model_dump()
+        )
 
     result = {"status": session["status"]}
 
@@ -91,21 +112,24 @@ async def get_login_session(session_id: str):
     return result
 
 
-# ──────────────────────────────────────────────
+# ------------------------------------------------------------------
 # 3. Redirect đến Google OAuth
-# ──────────────────────────────────────────────
+# ------------------------------------------------------------------
 @router.get("/google/login/flutter")
 async def google_login_flutter(session_id: str):
     """
     Redirect người dùng đến trang đăng nhập Google.
 
-    session_id được truyền qua tham số `state` của OAuth
+    session_id được truyền qua tham số 'state' của OAuth
     để callback có thể liên kết kết quả với phiên đúng.
     """
     if not GOOGLE_CLIENT_ID:
         raise HTTPException(
             status_code=500,
-            detail="GOOGLE_CLIENT_ID chưa được cấu hình trong .env"
+            detail=ApiError(
+                message="GOOGLE_CLIENT_ID chưa được cấu hình trong .env",
+                error_code="MISSING_CONFIG"
+            ).model_dump()
         )
 
     params = {
@@ -118,22 +142,21 @@ async def google_login_flutter(session_id: str):
         "prompt": "consent",
     }
 
-    # Build URL
     query = "&".join(f"{k}={v}" for k, v in params.items())
     auth_url = f"{GOOGLE_AUTH_URL}?{query}"
 
     return RedirectResponse(url=auth_url)
 
 
-# ──────────────────────────────────────────────
+# ------------------------------------------------------------------
 # 4. Google OAuth Callback
-# ──────────────────────────────────────────────
+# ------------------------------------------------------------------
 @router.get("/google/callback/flutter")
 async def google_callback_flutter(code: str, state: str):
     """
     Callback từ Google sau khi người dùng đăng nhập thành công.
 
-    1. Exchange authorization code → access token
+    1. Exchange authorization code -> access token
     2. Lấy thông tin user từ Google
     3. Tạo JWT token
     4. Cập nhật vào DB ứng với session_id (state)
@@ -144,10 +167,13 @@ async def google_callback_flutter(code: str, state: str):
     if not GOOGLE_CLIENT_ID or not GOOGLE_CLIENT_SECRET:
         raise HTTPException(
             status_code=500,
-            detail="Google OAuth credentials chưa được cấu hình."
+            detail=ApiError(
+                message="Google OAuth credentials chưa được cấu hình.",
+                error_code="MISSING_CONFIG"
+            ).model_dump()
         )
 
-    # Step 1: Exchange code → access token
+    # Step 1: Exchange code -> access token
     async with httpx.AsyncClient() as client:
         token_response = await client.post(
             GOOGLE_TOKEN_URL,
@@ -161,16 +187,26 @@ async def google_callback_flutter(code: str, state: str):
         )
 
     if token_response.status_code != 200:
+        logger.error(f"Google token exchange thất bại: {token_response.text}")
         raise HTTPException(
             status_code=400,
-            detail=f"Không thể lấy token từ Google: {token_response.text}"
+            detail=ApiError(
+                message="Không thể lấy token từ Google.",
+                error_code="GOOGLE_TOKEN_ERROR"
+            ).model_dump()
         )
 
     token_data = token_response.json()
     access_token = token_data.get("access_token")
 
     if not access_token:
-        raise HTTPException(status_code=400, detail="Không nhận được access token từ Google.")
+        raise HTTPException(
+            status_code=400,
+            detail=ApiError(
+                message="Không nhận được access token từ Google.",
+                error_code="NO_ACCESS_TOKEN"
+            ).model_dump()
+        )
 
     # Step 2: Lấy thông tin user
     async with httpx.AsyncClient() as client:
@@ -182,10 +218,14 @@ async def google_callback_flutter(code: str, state: str):
     if userinfo_response.status_code != 200:
         raise HTTPException(
             status_code=400,
-            detail="Không thể lấy thông tin user từ Google."
+            detail=ApiError(
+                message="Không thể lấy thông tin user từ Google.",
+                error_code="GOOGLE_USERINFO_ERROR"
+            ).model_dump()
         )
 
     user_info = userinfo_response.json()
+    logger.info(f"Đăng nhập thành công: {user_info.get('email')}")
 
     # Step 3: Tạo JWT token
     jwt_token = create_jwt_token({
@@ -204,7 +244,7 @@ async def google_callback_flutter(code: str, state: str):
             user_picture=user_info.get("picture"),
         )
 
-    # Step 5: Trả về trang HTML thành công
+    # Step 5: Trả về trang HTML thành công (không dùng emoji)
     user_name = user_info.get("name", "bạn")
     success_html = f"""
     <!DOCTYPE html>
@@ -240,7 +280,14 @@ async def google_callback_flutter(code: str, state: str):
                 from {{ opacity: 0; transform: translateY(20px); }}
                 to {{ opacity: 1; transform: translateY(0); }}
             }}
-            .icon {{ font-size: 4rem; margin-bottom: 1rem; }}
+            .icon {{
+                width: 64px; height: 64px;
+                margin: 0 auto 1rem;
+                border-radius: 50%;
+                background: linear-gradient(135deg, #34d399, #059669);
+                display: flex; align-items: center; justify-content: center;
+            }}
+            .icon svg {{ stroke: white; }}
             h2 {{
                 font-size: 1.5rem;
                 background: linear-gradient(135deg, #667eea, #764ba2);
@@ -270,12 +317,14 @@ async def google_callback_flutter(code: str, state: str):
     </head>
     <body>
         <div class="card">
-            <div class="icon">✅</div>
+            <div class="icon">
+                <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>
+            </div>
             <h2>Đăng nhập thành công!</h2>
             <p>Xin chào, <span class="name">{user_name}</span>!</p>
             <p>Bạn đã đăng nhập vào Chatbot Kinh Tế thành công.</p>
             <div class="hint">
-                💡 Hãy <strong>đóng Tab này</strong> và quay lại ứng dụng.<br>
+                Hãy <strong>đóng Tab này</strong> và quay lại ứng dụng.<br>
                 Hệ thống sẽ tự động đăng nhập cho bạn.
             </div>
         </div>
@@ -286,9 +335,9 @@ async def google_callback_flutter(code: str, state: str):
     return HTMLResponse(content=success_html)
 
 
-# ──────────────────────────────────────────────
+# ------------------------------------------------------------------
 # 5. Xác thực JWT Token
-# ──────────────────────────────────────────────
+# ------------------------------------------------------------------
 @router.post("/verify")
 async def verify_token(token: str = Form(...)):
     """
@@ -299,13 +348,22 @@ async def verify_token(token: str = Form(...)):
     """
     payload = verify_jwt_token(token)
     if not payload:
-        raise HTTPException(status_code=401, detail="Token không hợp lệ hoặc đã hết hạn.")
+        raise HTTPException(
+            status_code=401,
+            detail=ApiError(
+                message="Token không hợp lệ hoặc đã hết hạn.",
+                error_code="INVALID_TOKEN"
+            ).model_dump()
+        )
 
-    return {
-        "valid": True,
-        "user": {
-            "email": payload.get("email"),
-            "name": payload.get("name"),
-            "picture": payload.get("picture"),
+    return ApiSuccess(
+        message="Token hợp lệ",
+        data={
+            "valid": True,
+            "user": {
+                "email": payload.get("email"),
+                "name": payload.get("name"),
+                "picture": payload.get("picture"),
+            }
         }
-    }
+    )

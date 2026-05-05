@@ -26,7 +26,9 @@ PROJECT_ROOT = Path(__file__).parent.parent.parent
 sys.path.insert(0, str(PROJECT_ROOT))
 load_dotenv(PROJECT_ROOT / ".env")
 
-from fastapi import FastAPI, HTTPException, Header, Request
+import uuid
+
+from fastapi import FastAPI, HTTPException, Header, Request, Depends, BackgroundTasks
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse, JSONResponse
@@ -36,6 +38,7 @@ from chatbot.main import ChatbotRunner
 from chatbot.utils.base_db import UserDB
 from chatbot.utils.jwt_utils import verify_jwt_token
 from app.models.schemas import ApiSuccess, ApiError
+from app.security.security import get_current_user
 from app.logger import get_logger
 
 logger = get_logger(__name__)
@@ -318,27 +321,19 @@ async def chat(request: ChatRequest, authorization: str = Header(default=None)):
 
 
 # ------------------------------------------------------------------
-# Chat History Endpoints
+# Chat History Endpoints (sử dụng Depends(get_current_user) thay vì Header thủ công)
 # ------------------------------------------------------------------
 @app.get("/api/chat/history", tags=["Chat History"])
 async def get_chat_history(
     limit: int = 100,
     offset: int = 0,
-    authorization: str = Header(default=None),
+    current_user: dict = Depends(get_current_user),
 ):
     """
     Lấy lịch sử chat của user đang đăng nhập.
-    Yêu cầu JWT token trong Authorization header.
+    Yêu cầu JWT token (tự động xác thực qua Depends).
     """
-    user_email = get_user_email_from_token(authorization)
-    if not user_email:
-        raise HTTPException(
-            status_code=401,
-            detail=ApiError(
-                message="Chưa đăng nhập.",
-                error_code="UNAUTHORIZED"
-            ).model_dump()
-        )
+    user_email = current_user["email"]
 
     with UserDB() as db:
         messages = db.get_chat_history(user_email, limit=limit, offset=offset)
@@ -354,20 +349,12 @@ async def get_chat_history(
 
 
 @app.delete("/api/chat/history", tags=["Chat History"])
-async def clear_chat_history(authorization: str = Header(default=None)):
+async def clear_chat_history(current_user: dict = Depends(get_current_user)):
     """
     Xóa toàn bộ lịch sử chat của user đang đăng nhập.
-    Yêu cầu JWT token trong Authorization header.
+    Yêu cầu JWT token (tự động xác thực qua Depends).
     """
-    user_email = get_user_email_from_token(authorization)
-    if not user_email:
-        raise HTTPException(
-            status_code=401,
-            detail=ApiError(
-                message="Chưa đăng nhập.",
-                error_code="UNAUTHORIZED"
-            ).model_dump()
-        )
+    user_email = current_user["email"]
 
     with UserDB() as db:
         deleted = db.clear_chat_history(user_email)
@@ -376,6 +363,157 @@ async def clear_chat_history(authorization: str = Header(default=None)):
         message="Xóa lịch sử thành công",
         data={"deleted": deleted, "user_email": user_email}
     )
+
+
+# ------------------------------------------------------------------
+# Async Task Polling (skill_async_task_polling.md)
+# Dùng cho các tác vụ AI nặng (background processing)
+# ------------------------------------------------------------------
+task_store: dict = {}  # In-memory store cho task status
+
+
+class TaskRequest(BaseModel):
+    """Schema cho yêu cầu tạo task bất đồng bộ."""
+    question: str
+    prompt: Optional[str] = None
+
+
+def _heavy_chat_worker(task_id: str, question: str, prompt: str, user_email: str = None):
+    """
+    Worker chạy trong background thread cho tác vụ AI nặng.
+    Hàm đồng bộ (def) để FastAPI chạy trong ThreadPool riêng,
+    tránh gây nghẽn Event Loop.
+
+    Args:
+        task_id: UUID của task.
+        question: Câu hỏi cần xử lý.
+        prompt: Custom prompt (optional).
+        user_email: Email user để lưu lịch sử.
+    """
+    try:
+        bot = get_chatbot()
+        start_time = time.time()
+
+        input_state = {
+            "question": question,
+            "generation": "",
+            "documents": [],
+            "prompt": prompt or "",
+        }
+
+        output_state = bot.compiled_workflow.invoke(input_state)
+
+        elapsed = time.time() - start_time
+        answer = output_state.get("generation", "Không thể tạo câu trả lời.")
+        docs = output_state.get("documents", [])
+
+        sources = []
+        for doc in docs:
+            sources.append({
+                "content": doc.page_content[:500],
+                "source": doc.metadata.get("source", "Không rõ nguồn"),
+            })
+
+        # Cập nhật store
+        task_store[task_id] = {
+            "status": "done",
+            "result": {
+                "answer": answer,
+                "sources": sources,
+                "response_time": round(elapsed, 2),
+                "num_docs": len(docs),
+            }
+        }
+
+        # Lưu lịch sử nếu có user
+        if user_email:
+            try:
+                with UserDB() as db:
+                    db.save_chat_message(user_email=user_email, role="user", content=question)
+                    db.save_chat_message(
+                        user_email=user_email, role="bot", content=answer,
+                        sources=sources, response_time=round(elapsed, 2), num_docs=len(docs)
+                    )
+            except Exception as db_err:
+                logger.warning(f"Không thể lưu lịch sử task: {db_err}")
+
+        logger.info(f"Task {task_id} hoàn thành sau {elapsed:.1f}s")
+
+    except Exception as e:
+        logger.error(f"Task {task_id} thất bại: {e}", exc_info=True)
+        task_store[task_id] = {
+            "status": "failed",
+            "error": str(e),
+        }
+
+
+@app.post("/api/task/chat", tags=["Async Task"])
+async def start_chat_task(
+    request: TaskRequest,
+    background_tasks: BackgroundTasks,
+    authorization: str = Header(default=None),
+):
+    """
+    Khởi tạo tác vụ chat bất đồng bộ (background).
+    Trả về task_id ngay lập tức, frontend polling để lấy kết quả.
+
+    Dùng cho các câu hỏi phức tạp cần xử lý lâu (>30s).
+    """
+    get_chatbot()  # Kiểm tra chatbot sẵn sàng
+
+    if not request.question.strip():
+        raise HTTPException(
+            status_code=400,
+            detail=ApiError(
+                message="Câu hỏi không được để trống.",
+                error_code="EMPTY_QUESTION"
+            ).model_dump()
+        )
+
+    task_id = str(uuid.uuid4())
+    user_email = get_user_email_from_token(authorization)
+
+    # Đánh dấu trạng thái đang xử lý
+    task_store[task_id] = {"status": "processing", "start_time": time.time()}
+
+    # Đẩy vào background task
+    background_tasks.add_task(
+        _heavy_chat_worker, task_id, request.question, request.prompt, user_email
+    )
+
+    return ApiSuccess(
+        message="Tác vụ đã được khởi tạo",
+        data={"task_id": task_id, "status": "processing"}
+    )
+
+
+@app.get("/api/task/{task_id}", tags=["Async Task"])
+async def get_task_status(task_id: str):
+    """
+    Kiểm tra trạng thái tác vụ bất đồng bộ.
+    Frontend gọi API này mỗi 2-3 giây để polling kết quả.
+    """
+    task = task_store.get(task_id)
+    if not task:
+        raise HTTPException(
+            status_code=404,
+            detail=ApiError(
+                message="Task không tồn tại.",
+                error_code="TASK_NOT_FOUND"
+            ).model_dump()
+        )
+
+    response_data = {"task_id": task_id, "status": task["status"]}
+
+    if task["status"] == "done":
+        response_data["result"] = task["result"]
+        # Xóa khỏi store sau khi trả kết quả (tiết kiệm memory)
+        del task_store[task_id]
+    elif task["status"] == "failed":
+        response_data["error"] = task.get("error", "Lỗi không xác định")
+        del task_store[task_id]
+
+    return ApiSuccess(data=response_data)
 
 
 # ------------------------------------------------------------------
