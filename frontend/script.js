@@ -1,5 +1,5 @@
 /**
- * 🤖 Chatbot Kinh Tế Việt Nam — Frontend Logic
+ * Chatbot Kinh Te Viet Nam — Frontend Logic
  *
  * Handles:
  *  - Google OAuth 2.0 login with Cloud-Sync Polling
@@ -8,11 +8,15 @@
  *  - Session stats tracking
  *  - Sidebar toggle (mobile)
  *  - Health check polling
+ *
+ * Tham chieu:
+ *  - docs/DOCS-main/skill_frontend_architecture.md
+ *  - docs/DOCS-main/skill_coding_conventions.md
  */
 
-// ──────────────────────────────────────────────
+// ------------------------------------------------------------------
 // Config & State
-// ──────────────────────────────────────────────
+// ------------------------------------------------------------------
 const API_BASE = window.location.origin;
 
 const state = {
@@ -30,9 +34,9 @@ const state = {
     pollInterval: null,
 };
 
-// ──────────────────────────────────────────────
+// ------------------------------------------------------------------
 // DOM References
-// ──────────────────────────────────────────────
+// ------------------------------------------------------------------
 const chatMessages = document.getElementById("chatMessages");
 const chatInput = document.getElementById("chatInput");
 const btnSend = document.getElementById("btnSend");
@@ -57,9 +61,9 @@ const userAvatar = document.getElementById("userAvatar");
 const userName = document.getElementById("userName");
 const userEmail = document.getElementById("userEmail");
 
-// ══════════════════════════════════════════════
+// ------------------------------------------------------------------
 // AUTHENTICATION
-// ══════════════════════════════════════════════
+// ------------------------------------------------------------------
 
 /**
  * Initialize auth state on page load.
@@ -120,18 +124,22 @@ function showApp() {
     // Update user profile in sidebar
     if (state.user) {
         userProfileSection.style.display = "block";
-        userName.textContent = state.user.name || "Người dùng";
+        userName.textContent = state.user.name || "Nguoi dung";
         userEmail.textContent = state.user.email || "";
 
         if (state.user.picture) {
             userAvatar.src = state.user.picture;
             userAvatar.style.display = "block";
+            // Avatar fallback: hien thi chu cai dau neu anh loi
+            userAvatar.onerror = function() {
+                this.style.display = "none";
+            };
         } else {
             userAvatar.style.display = "none";
         }
     }
 
-    // Load lịch sử chat từ DB
+    // Load lich su chat tu DB
     loadChatHistory();
 
     // Focus chat input
@@ -139,7 +147,7 @@ function showApp() {
 }
 
 /**
- * Load lịch sử chat của user từ database.
+ * Load lich su chat cua user tu database.
  */
 async function loadChatHistory() {
     if (!state.token) return;
@@ -153,12 +161,16 @@ async function loadChatHistory() {
 
         const data = await res.json();
 
-        if (data.messages && data.messages.length > 0) {
-            // Ẩn welcome screen
+        // Xu ly response theo chuan ApiSuccess
+        const responseData = data.data || data;
+        const messages = responseData.messages || [];
+
+        if (messages.length > 0) {
+            // An welcome screen
             if (welcomeScreen) welcomeScreen.style.display = "none";
 
-            // Render từng tin nhắn
-            data.messages.forEach((msg) => {
+            // Render tung tin nhan
+            messages.forEach((msg) => {
                 if (msg.role === "user") {
                     addMessage("user", msg.content);
                 } else {
@@ -170,8 +182,8 @@ async function loadChatHistory() {
                 }
             });
 
-            // Cập nhật stats
-            const botMessages = data.messages.filter(m => m.role === "bot");
+            // Cap nhat stats
+            const botMessages = messages.filter(m => m.role === "bot");
             state.totalQuestions = botMessages.length;
             state.totalTime = botMessages.reduce((sum, m) => sum + (m.response_time || 0), 0);
             state.totalDocs = botMessages.reduce((sum, m) => sum + (m.num_docs || 0), 0);
@@ -204,7 +216,7 @@ async function handleGoogleLogin() {
         });
 
         if (!createRes.ok) {
-            throw new Error("Không thể tạo phiên đăng nhập.");
+            throw new Error("Khong the tao phien dang nhap.");
         }
 
         // 2. Start polling for session status
@@ -216,7 +228,7 @@ async function handleGoogleLogin() {
                 const data = await res.json();
 
                 if (data.status === "completed" && data.token) {
-                    // Login successful!
+                    // Login successful
                     clearInterval(state.pollInterval);
                     state.pollInterval = null;
 
@@ -242,14 +254,14 @@ async function handleGoogleLogin() {
         setTimeout(() => {
             if (state.pollInterval) {
                 cancelPolling();
-                alert("Phiên đăng nhập đã hết hạn. Vui lòng thử lại.");
+                alert("Phien dang nhap da het han. Vui long thu lai.");
             }
         }, 10 * 60 * 1000);
 
     } catch (err) {
         console.error("Login error:", err);
         cancelPolling();
-        alert(`Lỗi đăng nhập: ${err.message}`);
+        alert(`Loi dang nhap: ${err.message}`);
     }
 }
 
@@ -267,6 +279,9 @@ function cancelPolling() {
 
 /**
  * Handle successful login.
+ *
+ * @param {Object} user - User info object from server.
+ * @param {string} token - JWT access token.
  */
 function onLoginSuccess(user, token) {
     state.token = token;
@@ -299,31 +314,34 @@ function handleLogout() {
     showLogin();
 }
 
-// ══════════════════════════════════════════════
+// ------------------------------------------------------------------
 // HEALTH CHECK
-// ══════════════════════════════════════════════
+// ------------------------------------------------------------------
 
 async function checkHealth() {
     try {
         const res = await fetch(`${API_BASE}/api/health`);
         const data = await res.json();
 
-        state.isOnline = data.model_loaded;
-        state.llmProvider = data.llm_provider || "-";
+        // Xu ly response theo chuan ApiSuccess
+        const healthData = data.data || data;
 
-        statusDot.className = `status-dot ${data.model_loaded ? "online" : ""}`;
-        statusText.textContent = data.model_loaded ? "Sẵn sàng" : "Đang khởi tạo...";
+        state.isOnline = healthData.model_loaded;
+        state.llmProvider = healthData.llm_provider || "-";
+
+        statusDot.className = `status-dot ${healthData.model_loaded ? "online" : ""}`;
+        statusText.textContent = healthData.model_loaded ? "San sang" : "Dang khoi tao...";
 
         const displayName = {
             openai: "OpenAI",
             gemini: "Gemini",
             groq: "Groq",
         };
-        llmName.textContent = displayName[data.llm_provider] || data.llm_provider;
-        statLLM.textContent = (displayName[data.llm_provider] || data.llm_provider).slice(0, 7);
+        llmName.textContent = displayName[healthData.llm_provider] || healthData.llm_provider;
+        statLLM.textContent = (displayName[healthData.llm_provider] || healthData.llm_provider || "").slice(0, 7);
     } catch (e) {
         statusDot.className = "status-dot offline";
-        statusText.textContent = "Không kết nối";
+        statusText.textContent = "Khong ket noi";
         state.isOnline = false;
     }
 }
@@ -332,9 +350,9 @@ async function checkHealth() {
 checkHealth();
 setInterval(checkHealth, 10000);
 
-// ══════════════════════════════════════════════
+// ------------------------------------------------------------------
 // CHAT FUNCTIONALITY
-// ══════════════════════════════════════════════
+// ------------------------------------------------------------------
 
 function updateStats() {
     statQuestions.textContent = state.totalQuestions;
@@ -347,6 +365,11 @@ function updateStats() {
 
 /**
  * Create a message element and append to chat.
+ *
+ * @param {string} role - "user" or "bot".
+ * @param {string} content - Message text content.
+ * @param {Object} meta - Optional metadata (time, docsCount, sources).
+ * @returns {HTMLElement} The created message div.
  */
 function addMessage(role, content, meta = {}) {
     // Hide welcome screen
@@ -359,7 +382,7 @@ function addMessage(role, content, meta = {}) {
 
     const avatar = document.createElement("div");
     avatar.className = "avatar";
-    avatar.textContent = role === "user" ? "👤" : "🤖";
+    avatar.textContent = role === "user" ? "U" : "AI";
 
     const body = document.createElement("div");
     body.className = "message-body";
@@ -374,9 +397,9 @@ function addMessage(role, content, meta = {}) {
     if (meta.time !== undefined) {
         const metaDiv = document.createElement("div");
         metaDiv.className = "message-meta";
-        metaDiv.innerHTML = `⏱️ ${meta.time}s`;
+        metaDiv.innerHTML = `${meta.time}s`;
         if (meta.docsCount !== undefined) {
-            metaDiv.innerHTML += ` &nbsp;·&nbsp; 📄 ${meta.docsCount} tài liệu`;
+            metaDiv.innerHTML += ` &nbsp;&middot;&nbsp; ${meta.docsCount} tai lieu`;
         }
         body.appendChild(metaDiv);
     }
@@ -385,7 +408,7 @@ function addMessage(role, content, meta = {}) {
     if (meta.sources && meta.sources.length > 0) {
         const toggleBtn = document.createElement("button");
         toggleBtn.className = "sources-toggle";
-        toggleBtn.innerHTML = `📄 Xem ${meta.sources.length} tài liệu nguồn <span class="arrow">▼</span>`;
+        toggleBtn.innerHTML = `Xem ${meta.sources.length} tai lieu nguon <span class="arrow">&#9660;</span>`;
 
         const panel = document.createElement("div");
         panel.className = "sources-panel";
@@ -394,11 +417,11 @@ function addMessage(role, content, meta = {}) {
             const card = document.createElement("div");
             card.className = "source-card";
 
-            const sourceName = src.source || "Không rõ nguồn";
+            const sourceName = src.source || "Khong ro nguon";
             const fileName = sourceName.split("/").pop();
 
             card.innerHTML = `
-                <div class="source-card-title">📑 Tài liệu ${i + 1} — ${fileName}</div>
+                <div class="source-card-title">Tai lieu ${i + 1} -- ${fileName}</div>
                 ${src.content}
             `;
             panel.appendChild(card);
@@ -432,7 +455,7 @@ function showTyping() {
     msgDiv.id = "typingMsg";
 
     msgDiv.innerHTML = `
-        <div class="avatar">🤖</div>
+        <div class="avatar">AI</div>
         <div class="message-body">
             <div class="bubble">
                 <div class="typing-indicator">
@@ -451,9 +474,9 @@ function hideTyping() {
     if (el) el.remove();
 }
 
-// ──────────────────────────────────────────────
+// ------------------------------------------------------------------
 // Send Message
-// ──────────────────────────────────────────────
+// ------------------------------------------------------------------
 async function sendMessage() {
     const text = chatInput.value.trim();
     if (!text || state.isLoading) return;
@@ -487,28 +510,32 @@ async function sendMessage() {
 
         if (!res.ok) {
             const err = await res.json();
-            addMessage("bot", `❌ Lỗi: ${err.detail || "Không thể xử lý câu hỏi."}`);
+            const errMsg = err.message || err.detail || "Khong the xu ly cau hoi.";
+            addMessage("bot", `[LOI] ${errMsg}`);
             return;
         }
 
         const data = await res.json();
 
+        // Xu ly response theo chuan ApiSuccess
+        const chatData = data.data || data;
+
         // Add bot response
-        addMessage("bot", data.answer, {
-            time: data.response_time,
-            docsCount: data.num_docs_graded,
-            sources: data.sources || [],
+        addMessage("bot", chatData.answer, {
+            time: chatData.response_time,
+            docsCount: chatData.num_docs_graded,
+            sources: chatData.sources || [],
         });
 
         // Update stats
         state.totalQuestions++;
-        state.totalTime += data.response_time;
-        state.totalDocs += data.num_docs_graded;
+        state.totalTime += chatData.response_time;
+        state.totalDocs += chatData.num_docs_graded;
         updateStats();
 
     } catch (e) {
         hideTyping();
-        addMessage("bot", "❌ Không thể kết nối đến server. Vui lòng kiểm tra server đang chạy.");
+        addMessage("bot", "[LOI] Khong the ket noi den server. Vui long kiem tra server dang chay.");
     } finally {
         state.isLoading = false;
         btnSend.disabled = false;
@@ -517,9 +544,9 @@ async function sendMessage() {
     }
 }
 
-// ──────────────────────────────────────────────
+// ------------------------------------------------------------------
 // Input Handlers
-// ──────────────────────────────────────────────
+// ------------------------------------------------------------------
 function handleKeyDown(e) {
     if (e.key === "Enter" && !e.shiftKey) {
         e.preventDefault();
@@ -532,17 +559,17 @@ function autoResize(el) {
     el.style.height = Math.min(el.scrollHeight, 120) + "px";
 }
 
-// ──────────────────────────────────────────────
+// ------------------------------------------------------------------
 // Suggestion Chips
-// ──────────────────────────────────────────────
+// ------------------------------------------------------------------
 function askSuggestion(chipEl) {
     chatInput.value = chipEl.textContent;
     sendMessage();
 }
 
-// ──────────────────────────────────────────────
+// ------------------------------------------------------------------
 // Clear Chat
-// ──────────────────────────────────────────────
+// ------------------------------------------------------------------
 async function clearChat() {
     // Remove all messages except welcome
     const messages = chatMessages.querySelectorAll(".message");
@@ -559,7 +586,7 @@ async function clearChat() {
     state.totalDocs = 0;
     updateStats();
 
-    // Xóa lịch sử trên server
+    // Xoa lich su tren server
     if (state.token) {
         try {
             await fetch(`${API_BASE}/api/chat/history`, {
@@ -572,9 +599,9 @@ async function clearChat() {
     }
 }
 
-// ──────────────────────────────────────────────
+// ------------------------------------------------------------------
 // Sidebar Toggle (Mobile)
-// ──────────────────────────────────────────────
+// ------------------------------------------------------------------
 function toggleSidebar() {
     const sidebar = document.getElementById("sidebar");
     sidebar.classList.toggle("open");
@@ -590,9 +617,22 @@ function toggleSidebar() {
     overlay.classList.toggle("active");
 }
 
-// ──────────────────────────────────────────────
+// ------------------------------------------------------------------
+// Multi-Tab Logout Sync (skill_security_authentication.md Muc 6.4)
+// ------------------------------------------------------------------
+window.addEventListener("storage", (e) => {
+    if (e.key === "auth_token" && e.newValue === null) {
+        // Tab khac da logout, cap nhat state tab hien tai
+        state.token = null;
+        state.user = null;
+        state.isLoggedIn = false;
+        showLogin();
+    }
+});
+
+// ------------------------------------------------------------------
 // Initialize on load
-// ──────────────────────────────────────────────
+// ------------------------------------------------------------------
 window.addEventListener("load", () => {
     initAuth();
 });

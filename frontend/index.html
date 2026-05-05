@@ -3,22 +3,22 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <meta name="description" content="Chatbot Kinh Tế Việt Nam - Hệ thống hỏi đáp thông minh sử dụng RAG với Energy-Based Distance">
-    <title>Chatbot Kinh Tế Việt Nam</title>
+    <meta name="description" content="Chatbot Kinh Te Viet Nam - He thong hoi dap thong minh su dung RAG voi Energy-Based Distance">
+    <title>Chatbot Kinh Te Viet Nam</title>
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
     <link rel="stylesheet" href="/static/styles.css">
-    <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🇻🇳</text></svg>">
+    <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Crect width='100' height='100' rx='20' fill='%23667eea'/%3E%3Ctext x='50' y='65' text-anchor='middle' font-size='50' fill='white' font-weight='bold'%3EKT%3C/text%3E%3C/svg%3E">
 </head>
 <body>
-    <!-- ── Background Effects ── -->
+    <!-- Background Effects -->
     <div class="bg-gradient"></div>
     <div class="bg-grid"></div>
 
-    <!-- ══════════════════════════════════════════════
+    <!-- ============================================================
          LOGIN SCREEN
-         ══════════════════════════════════════════════ -->
+         ============================================================ -->
     <div class="login-overlay" id="loginOverlay">
         <div class="login-container">
             <!-- Decorative orbs -->
@@ -28,28 +28,34 @@
 
             <div class="login-card" id="loginCard">
                 <div class="login-logo">
-                    <span class="login-logo-icon">🤖</span>
-                    <h1>Chatbot Kinh Tế</h1>
-                    <p class="login-subtitle">Hệ thống hỏi đáp thông minh sử dụng AI</p>
+                    <span class="login-logo-icon">KT</span>
+                    <h1>Chatbot Kinh Te</h1>
+                    <p class="login-subtitle">He thong hoi dap thong minh su dung AI</p>
                 </div>
 
                 <div class="login-features">
                     <div class="login-feature">
-                        <span class="feature-icon">🔍</span>
+                        <span class="feature-icon">
+                            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#667eea" stroke-width="2"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+                        </span>
                         <div>
                             <strong>RAG Pipeline</strong>
                             <span>Energy-Based Distance Retriever</span>
                         </div>
                     </div>
                     <div class="login-feature">
-                        <span class="feature-icon">📊</span>
+                        <span class="feature-icon">
+                            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#34d399" stroke-width="2"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/></svg>
+                        </span>
                         <div>
-                            <strong>Dữ liệu kinh tế</strong>
-                            <span>Cơ sở dữ liệu chuyên sâu Việt Nam</span>
+                            <strong>Du lieu kinh te</strong>
+                            <span>Co so du lieu chuyen sau Viet Nam</span>
                         </div>
                     </div>
                     <div class="login-feature">
-                        <span class="feature-icon">⚡</span>
+                        <span class="feature-icon">
+                            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#fbbf24" stroke-width="2"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg>
+                        </span>
                         <div>
                             <strong>Multi-LLM</strong>
                             <span>OpenAI, Gemini, Groq</span>
@@ -58,7 +64,7 @@
                 </div>
 
                 <div class="login-divider">
-                    <span>Đăng nhập để tiếp tục</span>
+                    <span>Dang nhap de tiep tuc</span>
                 </div>
 
                 <button class="btn-google-login" id="btnGoogleLogin" onclick="handleGoogleLogin()">
@@ -68,35 +74,35 @@
                         <path d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.07H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.93l2.85-2.22.81-.62z" fill="#FBBC05"/>
                         <path d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z" fill="#EA4335"/>
                     </svg>
-                    <span>Đăng nhập bằng Google</span>
+                    <span>Dang nhap bang Google</span>
                 </button>
 
                 <!-- Polling Status -->
                 <div class="login-polling" id="loginPolling" style="display: none;">
                     <div class="polling-spinner"></div>
-                    <span>Đang chờ đăng nhập...</span>
-                    <button class="polling-cancel" onclick="cancelPolling()">Hủy</button>
+                    <span>Dang cho dang nhap...</span>
+                    <button class="polling-cancel" onclick="cancelPolling()">Huy</button>
                 </div>
 
                 <p class="login-footer-text">
-                    Bảo mật bởi Google OAuth 2.0
+                    Bao mat boi Google OAuth 2.0
                 </p>
             </div>
         </div>
     </div>
 
-    <!-- ══════════════════════════════════════════════
+    <!-- ============================================================
          MAIN APP (Hidden until login)
-         ══════════════════════════════════════════════ -->
+         ============================================================ -->
     <div class="app-container" id="appContainer" style="display: none;">
 
-        <!-- ── Sidebar ── -->
+        <!-- Sidebar -->
         <aside class="sidebar" id="sidebar">
             <div class="sidebar-header">
                 <div class="logo">
-                    <span class="logo-icon">🤖</span>
+                    <span class="logo-icon">KT</span>
                     <div>
-                        <h2>Kinh Tế Bot</h2>
+                        <h2>Kinh Te Bot</h2>
                         <span class="version-badge">v1.0</span>
                     </div>
                 </div>
@@ -105,7 +111,7 @@
             <div class="sidebar-content">
                 <!-- User Profile -->
                 <div class="sidebar-section" id="userProfileSection" style="display: none;">
-                    <div class="section-label">Người dùng</div>
+                    <div class="section-label">Nguoi dung</div>
                     <div class="user-profile-card" id="userProfileCard">
                         <img class="user-avatar" id="userAvatar" src="" alt="Avatar">
                         <div class="user-info">
@@ -117,20 +123,20 @@
 
                 <!-- Status -->
                 <div class="sidebar-section">
-                    <div class="section-label">Trạng thái</div>
+                    <div class="section-label">Trang thai</div>
                     <div class="status-card" id="statusCard">
                         <div class="status-dot" id="statusDot"></div>
-                        <span id="statusText">Đang kết nối...</span>
+                        <span id="statusText">Dang ket noi...</span>
                     </div>
                 </div>
 
                 <!-- Stats -->
                 <div class="sidebar-section">
-                    <div class="section-label">Thống Kê Phiên</div>
+                    <div class="section-label">Thong Ke Phien</div>
                     <div class="stats-grid">
                         <div class="stat-item">
                             <div class="stat-value" id="statQuestions">0</div>
-                            <div class="stat-label">Câu hỏi</div>
+                            <div class="stat-label">Cau hoi</div>
                         </div>
                         <div class="stat-item">
                             <div class="stat-value" id="statAvgTime">0s</div>
@@ -138,7 +144,7 @@
                         </div>
                         <div class="stat-item">
                             <div class="stat-value" id="statDocs">0</div>
-                            <div class="stat-label">Tài liệu</div>
+                            <div class="stat-label">Tai lieu</div>
                         </div>
                         <div class="stat-item">
                             <div class="stat-value" id="statLLM">-</div>
@@ -149,7 +155,7 @@
 
                 <!-- Pipeline Info -->
                 <div class="sidebar-section">
-                    <div class="section-label">🔧 Pipeline</div>
+                    <div class="section-label">Pipeline</div>
                     <div class="pipeline-info">
                         <div class="pipeline-row">
                             <span>Embedding</span>
@@ -174,15 +180,17 @@
             <!-- Sidebar Footer -->
             <div class="sidebar-footer">
                 <button class="btn-clear" id="btnClear" onclick="clearChat()">
-                    <span>🗑️</span> Xóa lịch sử
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>
+                    Xoa lich su
                 </button>
                 <button class="btn-logout" id="btnLogout" onclick="handleLogout()">
-                    <span>🚪</span> Đăng xuất
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/></svg>
+                    Dang xuat
                 </button>
             </div>
         </aside>
 
-        <!-- ── Main Chat Area ── -->
+        <!-- Main Chat Area -->
         <main class="chat-main">
             <!-- Top Bar -->
             <div class="topbar">
@@ -190,7 +198,7 @@
                     <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="12" x2="21" y2="12"/><line x1="3" y1="18" x2="21" y2="18"/></svg>
                 </button>
                 <div class="topbar-title">
-                    <h1>Chatbot Kinh Tế Việt Nam</h1>
+                    <h1>Chatbot Kinh Te Viet Nam</h1>
                     <p>RAG + Energy-Based Distance Retriever</p>
                 </div>
                 <div class="topbar-actions">
@@ -205,13 +213,13 @@
             <div class="chat-messages" id="chatMessages">
                 <!-- Welcome Message -->
                 <div class="welcome-screen" id="welcomeScreen">
-                    <div class="welcome-icon">🇻🇳</div>
-                    <h2>Xin chào! Tôi là Chatbot Kinh Tế</h2>
-                    <p>Hỏi tôi bất kỳ câu hỏi nào về kinh tế Việt Nam.<br>Tôi sẽ tìm kiếm trong cơ sở dữ liệu và trả lời cho bạn.</p>
+                    <div class="welcome-icon">VN</div>
+                    <h2>Xin chao! Toi la Chatbot Kinh Te</h2>
+                    <p>Hoi toi bat ky cau hoi nao ve kinh te Viet Nam.<br>Toi se tim kiem trong co so du lieu va tra loi cho ban.</p>
                     <div class="suggestion-chips">
-                        <button class="chip" onclick="askSuggestion(this)">GDP Việt Nam tăng trưởng như thế nào?</button>
-                        <button class="chip" onclick="askSuggestion(this)">Chính sách tài khóa là gì?</button>
-                        <button class="chip" onclick="askSuggestion(this)">Tình hình xuất nhập khẩu Việt Nam?</button>
+                        <button class="chip" onclick="askSuggestion(this)">GDP Viet Nam tang truong nhu the nao?</button>
+                        <button class="chip" onclick="askSuggestion(this)">Chinh sach tai khoa la gi?</button>
+                        <button class="chip" onclick="askSuggestion(this)">Tinh hinh xuat nhap khau Viet Nam?</button>
                     </div>
                 </div>
             </div>
@@ -221,7 +229,7 @@
                 <div class="input-wrapper">
                     <textarea
                         id="chatInput"
-                        placeholder="Nhập câu hỏi về kinh tế Việt Nam..."
+                        placeholder="Nhap cau hoi ve kinh te Viet Nam..."
                         rows="1"
                         onkeydown="handleKeyDown(event)"
                         oninput="autoResize(this)"
@@ -231,7 +239,7 @@
                     </button>
                 </div>
                 <div class="input-footer">
-                    Chatbot có thể mắc lỗi. Hãy kiểm tra lại thông tin quan trọng.
+                    Chatbot co the mac loi. Hay kiem tra lai thong tin quan trong.
                 </div>
             </div>
         </main>
