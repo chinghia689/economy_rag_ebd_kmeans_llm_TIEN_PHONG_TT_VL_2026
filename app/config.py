@@ -13,6 +13,32 @@ from dotenv import load_dotenv
 _env_path = Path(__file__).parent.parent / ".env"
 load_dotenv(_env_path)
 
+WEAK_JWT_SECRETS = {
+    "change-this-in-production",
+    "chatbot-kinhte-default-secret-change-this",
+    "thay-doi-key-nay-khi-deploy-production",
+}
+
+
+def _resolve_env() -> str:
+    return os.getenv("ENV", "production").strip().lower()
+
+
+def _resolve_jwt_secret(env: str) -> str:
+    secret = os.getenv("JWT_SECRET_KEY", "").strip()
+    is_production = env in {"production", "prod"}
+
+    if is_production:
+        if not secret:
+            raise RuntimeError("JWT_SECRET_KEY is required when ENV=production.")
+        if secret in WEAK_JWT_SECRETS or len(secret) < 32:
+            raise RuntimeError(
+                "JWT_SECRET_KEY must be a non-default value with at least 32 characters "
+                "when ENV=production."
+            )
+
+    return secret or "dev-only-insecure-jwt-secret-change-before-production"
+
 
 class Settings:
     """
@@ -24,7 +50,7 @@ class Settings:
     DIR_ROOT: str = str(Path(__file__).parent.parent)
 
     # Môi trường: development hoặc production
-    ENV: str = os.getenv("ENV", "production")
+    ENV: str = _resolve_env()
 
     # AI Engine
     DEFAULT_LLM: str = os.getenv("DEFAULT_LLM", "openai")
@@ -35,15 +61,28 @@ class Settings:
     GROQ_API_KEY: str = os.getenv("GROQ_API_KEY", "")
 
     # JWT
-    JWT_SECRET_KEY: str = os.getenv("JWT_SECRET_KEY", "change-this-in-production")
+    JWT_SECRET_KEY: str = _resolve_jwt_secret(ENV)
 
     # Google OAuth
     GOOGLE_CLIENT_ID: str = os.getenv("GOOGLE_CLIENT_ID", "")
     GOOGLE_CLIENT_SECRET: str = os.getenv("GOOGLE_CLIENT_SECRET", "")
-    OAUTH_REDIRECT_URI: str = os.getenv("OAUTH_REDIRECT_URI", "")
+    OAUTH_REDIRECT_URI: str = os.getenv(
+        "OAUTH_REDIRECT_URI",
+        "http://localhost:8001/api/v1/auth/google/callback/flutter"
+    )
 
     # CORS
-    ALLOW_ORIGINS: list = ["http://localhost:5173", "http://localhost:8001"]
+    ALLOW_ORIGINS: list = os.getenv(
+        "ALLOW_ORIGINS", "http://localhost:5173,http://localhost:8001"
+    ).split(",")
+
+    # Payment (SePay + VietQR)
+    NAME_WEB: str = os.getenv("NAME_WEB", "KTChatbot")
+    SEPAY_API_KEY: str = os.getenv("SEPAY_API_KEY", "")
+    SEPAY_ACCOUNT_NUMBER: str = os.getenv("SEPAY_ACCOUNT_NUMBER", "")
+    BANK_CODE: str = os.getenv("BANK_CODE", "MB")
+    BANK_NAME: str = os.getenv("BANK_NAME", "MB Bank")
+    BANK_ACCOUNT_NAME: str = os.getenv("BANK_ACCOUNT_NAME", "")
 
 
 settings = Settings()

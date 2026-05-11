@@ -141,6 +141,7 @@ body {
     font-size: 1rem;
     font-weight: 700;
     background: var(--accent-gradient);
+    background-clip: text;
     -webkit-background-clip: text;
     -webkit-text-fill-color: transparent;
 }
@@ -234,6 +235,7 @@ body {
     font-size: 1rem;
     font-weight: 700;
     background: var(--accent-gradient);
+    background-clip: text;
     -webkit-background-clip: text;
     -webkit-text-fill-color: transparent;
 }
@@ -366,6 +368,7 @@ body {
     font-size: 1.05rem;
     font-weight: 700;
     background: var(--accent-gradient);
+    background-clip: text;
     -webkit-background-clip: text;
     -webkit-text-fill-color: transparent;
 }
@@ -451,6 +454,7 @@ body {
     font-size: 1.5rem;
     font-weight: 700;
     background: var(--accent-gradient);
+    background-clip: text;
     -webkit-background-clip: text;
     -webkit-text-fill-color: transparent;
     margin-bottom: 0.5rem;
@@ -905,6 +909,7 @@ body {
     font-size: 1.75rem;
     font-weight: 800;
     background: var(--accent-gradient);
+    background-clip: text;
     -webkit-background-clip: text;
     -webkit-text-fill-color: transparent;
     margin-bottom: 0.35rem;

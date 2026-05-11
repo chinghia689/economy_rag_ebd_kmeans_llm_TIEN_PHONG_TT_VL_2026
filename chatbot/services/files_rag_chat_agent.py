@@ -12,10 +12,12 @@ Quy trình:
     START -> retrieve -> grade_documents -> (generate | handle_no_answer) -> END
 """
 
+import os
 import re
 from typing import Dict, Any
 
 from ingestion.energy_kmeans import EnergyRetriever
+from ingestion.query_splitter import LLMQuerySplitter, SplitQueryEnergyRetriever
 from ingestion.model_embedding import vn_embedder
 from ingestion.chunks_document import ChromaDBManager
 from chatbot.utils.document_grader import DocumentGrader
@@ -82,6 +84,20 @@ class FilesChatAgent:
             embeddings_model=self.embeddings,
             k_retrieve=40,
             n_top_clusters=1
+        )
+
+        # Pipeline chính mới: dùng LLM tách câu hỏi thành nhiều query con,
+        # rồi tính Energy Distance giữa phân phối query vectors và từng cụm docs.
+        self.query_splitter = LLMQuerySplitter(
+            llm=self.llm,
+            max_parts=int(os.getenv("QUERY_SPLITTER_MAX_PARTS", "4")),
+            include_original=True,
+            min_query_vectors=int(os.getenv("QUERY_SPLITTER_MIN_QUERY_VECTORS", "2")),
+        )
+        self.split_query_retriever = SplitQueryEnergyRetriever(
+            energy_retriever=self.energy_retriever,
+            query_splitter=self.query_splitter,
+            max_final_docs=int(os.getenv("QUERY_SPLIT_MAX_FINAL_DOCS", "0")),
         )
 
     def handle_no_answer(self, state: GraphState) -> Dict[str, Any]:
@@ -182,10 +198,15 @@ class FilesChatAgent:
         """
         question = state["question"]
 
-        # Lấy danh sách documents liên quan dùng Energy Distance
-        documents = self.energy_retriever.retrieve(query=question)
+        documents = self.split_query_retriever.retrieve(query=question)
 
-        return {"documents": documents, "question": question}
+        return {
+            "documents": documents,
+            "question": question,
+            "query_parts": self.split_query_retriever.last_query_parts,
+            "retrieval_debug": self.split_query_retriever.last_retrieval_debug,
+            "algorithm": self.split_query_retriever.last_algorithm,
+        }
 
     def get_workflow(self):
         """

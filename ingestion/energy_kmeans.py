@@ -10,6 +10,15 @@ from ingestion.energy_base_distance import energy_base_distance
 class EnergyRetriever:
     """
     Module Truy xuất thông tin nâng cao sử dụng Energy-Based Distance và K-Means.
+
+    Lưu ý: retrieve() trong class này là code cũ, không đúng với pipeline
+    Energy Distance hiện tại vì X chỉ có 1 vector query gốc, chưa tạo thành
+    phân phối query từ nhiều query vectors.
+
+    Pipeline chatbot hiện tại dùng SplitQueryEnergyRetriever trong
+    ingestion/query_splitter.py để tính Energy Distance đúng giữa 2 phân phối:
+        X = phân phối query vectors [câu hỏi gốc + các câu hỏi con]
+        Y = phân phối document vectors trong từng cụm K-Means.
     """
     def __init__(self, vector_store, embeddings_model, k_retrieve=40, n_top_clusters=1):
         """
@@ -47,8 +56,9 @@ class EnergyRetriever:
 
         context = [doc.page_content for doc in docs]
 
-        # 2. Embedding lại query và context
-        # (Cách này tốn kém vì phải embed lại, nhưng an toàn và dễ code)
+        # 2. Embedding lại query và context.
+        # Code cũ: query chỉ có 1 vector nên không biểu diễn đúng phân phối query.
+        # Pipeline chính dùng query_splitter.py để tạo nhiều query vectors trước khi tính ED.
         doc_vectors = np.array(self.embeddings.embed_documents(context))
         query_vector = np.array(self.embeddings.embed_query(query)).reshape(1, -1)
 
@@ -56,7 +66,7 @@ class EnergyRetriever:
         sims = cosine_similarity(query_vector, doc_vectors)[0]
         print(f"   -> Max Cosine Similarity: {np.max(sims):.4f}")
 
-        # 4. Đưa toàn bộ 40 docs vào K-Means (không lọc threshold)
+        # 4. Đưa toàn bộ 40 docs vào K-Means 
         n_samples = len(doc_vectors)
         print(f"   -> 📋 Đưa toàn bộ {n_samples} docs vào K-Means")
 
@@ -99,6 +109,10 @@ class EnergyRetriever:
                 continue
                 
             cluster_vectors = doc_vectors[cluster_mask]
+            # Code cũ: không dùng kết quả này để mô tả pipeline hiện tại,
+            # vì X chỉ có 1 query vector. Với chatbot hiện tại, ED được tính bằng:
+            # energy_base_distance(query_vectors, cluster_vectors)
+            # trong SplitQueryEnergyRetriever, trong đó query_vectors gồm câu hỏi gốc + câu hỏi con.
             energy = energy_base_distance(query_vector, cluster_vectors)
             cluster_energies.append((i, energy))
         

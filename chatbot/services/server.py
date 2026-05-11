@@ -16,6 +16,7 @@ import os
 import sys
 import time
 from pathlib import Path
+from threading import RLock
 from typing import Optional
 from contextlib import asynccontextmanager
 
@@ -28,7 +29,7 @@ load_dotenv(PROJECT_ROOT / ".env")
 
 import uuid
 
-from fastapi import FastAPI, HTTPException, Header, Request, Depends, BackgroundTasks
+from fastapi import FastAPI, HTTPException, Request, Depends, BackgroundTasks
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse, JSONResponse
@@ -36,7 +37,7 @@ from pydantic import BaseModel
 
 from chatbot.main import ChatbotRunner
 from chatbot.utils.base_db import UserDB
-from chatbot.utils.jwt_utils import verify_jwt_token
+from chatbot.utils.token_counter import count_tokens
 from app.models.schemas import ApiSuccess, ApiError
 from app.security.security import get_current_user
 from app.logger import get_logger
@@ -51,6 +52,20 @@ class ChatRequest(BaseModel):
     """Schema cho yêu cầu chat từ Frontend."""
     question: str
     llm_provider: Optional[str] = None
+    conversation_id: Optional[str] = None
+
+
+class ConversationCreateRequest(BaseModel):
+    title: Optional[str] = None
+
+
+class ConversationUpdateRequest(BaseModel):
+    title: str
+
+
+class ConversationMessageRequest(BaseModel):
+    question: str
+    prompt: Optional[str] = None
 
 
 class ChatResponseData(BaseModel):
@@ -60,6 +75,9 @@ class ChatResponseData(BaseModel):
     response_time: float
     num_docs_retrieved: int
     num_docs_graded: int
+    token_used: int = 0
+    conversation_id: Optional[str] = None
+    balance: Optional[int] = None
 
 
 class HealthData(BaseModel):
@@ -73,72 +91,131 @@ class HealthData(BaseModel):
 # ------------------------------------------------------------------
 # Helper: Lấy user email từ JWT token
 # ------------------------------------------------------------------
-def get_user_email_from_token(authorization: str = None) -> str | None:
-    """
-    Trích xuất email từ Authorization header (Bearer token).
-
-    Args:
-        authorization: Giá trị Authorization header.
-
-    Returns:
-        Email của user hoặc None nếu token không hợp lệ.
-    """
-    if not authorization:
-        return None
-    try:
-        token = authorization.replace("Bearer ", "")
-        payload = verify_jwt_token(token)
-        if payload:
-            return payload.get("email")
-    except Exception:
-        pass
-    return None
-
-
-# ------------------------------------------------------------------
 # Global state
 # ------------------------------------------------------------------
 VECTOR_STORE_PATH = str(PROJECT_ROOT / "chroma_economy_db")
 DEFAULT_LLM = os.getenv("DEFAULT_LLM", "openai")
+MAX_QUESTION_CHARS = int(os.getenv("MAX_QUESTION_CHARS", "4000"))
 
 chatbot_instance: ChatbotRunner = None
 is_ready = False
+chatbot_lock = RLock()
 
 
 def get_chatbot() -> ChatbotRunner:
-    """Lấy chatbot instance, raise 503 nếu chưa sẵn sàng."""
-    global chatbot_instance, is_ready
-    if chatbot_instance is None:
-        raise HTTPException(
-            status_code=503,
-            detail=ApiError(
-                message="Chatbot đang khởi tạo, vui lòng thử lại sau.",
-                error_code="SERVICE_UNAVAILABLE"
-            ).model_dump()
-        )
-    return chatbot_instance
-
-
-@asynccontextmanager
-async def lifespan(app):
-    """Khởi tạo chatbot khi server start, dọn dẹp khi shutdown."""
+    """Lấy chatbot instance, khởi tạo lazy để server start không bị kẹt model/network."""
     global chatbot_instance, is_ready
 
-    logger.info("Đang khởi tạo Chatbot Server...")
+    if chatbot_instance is not None:
+        return chatbot_instance
 
-    if not os.path.exists(VECTOR_STORE_PATH):
-        logger.error(f"Vector store không tìm thấy tại: {VECTOR_STORE_PATH}")
-        logger.info("Chạy: python ingestion/vector_data_builder.py")
-    else:
+    with chatbot_lock:
+        if chatbot_instance is not None:
+            return chatbot_instance
+
+        if not os.path.exists(VECTOR_STORE_PATH):
+            raise HTTPException(
+                status_code=503,
+                detail=ApiError(
+                    message="Vector store không tìm thấy. Vui lòng ingest dữ liệu trước.",
+                    error_code="VECTOR_STORE_NOT_FOUND"
+                ).model_dump()
+            )
+
         try:
+            logger.info(f"Đang khởi tạo chatbot lazy với LLM: {DEFAULT_LLM}")
             chatbot_instance = ChatbotRunner(
                 path_vector_store=VECTOR_STORE_PATH,
                 llm_provider=DEFAULT_LLM,
             )
             is_ready = True
             logger.info(f"Chatbot đã sẵn sàng! LLM: {DEFAULT_LLM}")
+            return chatbot_instance
         except Exception as e:
+            is_ready = False
             logger.error(f"Lỗi khởi tạo chatbot: {e}", exc_info=True)
+            raise HTTPException(
+                status_code=503,
+                detail=ApiError(
+                    message="Chatbot chưa sẵn sàng, vui lòng thử lại sau.",
+                    error_code="SERVICE_UNAVAILABLE"
+                ).model_dump()
+            )
+
+
+def validate_question(question: str) -> str:
+    clean_question = question.strip()
+    if not clean_question:
+        raise HTTPException(
+            status_code=400,
+            detail=ApiError(
+                message="Câu hỏi không được để trống.",
+                error_code="EMPTY_QUESTION"
+            ).model_dump()
+        )
+    if len(clean_question) > MAX_QUESTION_CHARS:
+        raise HTTPException(
+            status_code=400,
+            detail=ApiError(
+                message=f"Câu hỏi quá dài. Tối đa {MAX_QUESTION_CHARS} ký tự.",
+                error_code="QUESTION_TOO_LONG"
+            ).model_dump()
+        )
+    return clean_question
+
+
+def get_chat_token_count(text: str) -> int:
+    return max(1, count_tokens(text, os.getenv("OPENAI_LLM_MODEL_NAME", "gpt-4o-mini")))
+
+
+def run_chat_workflow(question: str, prompt: str = "") -> tuple[str, list[dict], float, int]:
+    bot = get_chatbot()
+    start_time = time.time()
+
+    input_state = {
+        "question": question,
+        "generation": "",
+        "documents": [],
+        "prompt": prompt or "",
+    }
+
+    output_state = bot.compiled_workflow.invoke(input_state)
+
+    elapsed = time.time() - start_time
+    answer = output_state.get("generation", "Không thể tạo câu trả lời.")
+    docs = output_state.get("documents", [])
+
+    sources = []
+    for doc in docs:
+        sources.append({
+            "content": doc.page_content[:500],
+            "source": doc.metadata.get("source", "Không rõ nguồn"),
+            "full_content": doc.page_content,
+        })
+
+    return answer, sources, round(elapsed, 2), len(docs)
+
+
+def raise_insufficient_tokens(message: str = "Bạn đã hết token. Vui lòng nạp thêm token để tiếp tục."):
+    raise HTTPException(
+        status_code=402,
+        detail=ApiError(
+            message=message,
+            error_code="INSUFFICIENT_TOKENS"
+        ).model_dump()
+    )
+
+
+@asynccontextmanager
+async def lifespan(app):
+    """Khởi động server; chatbot được lazy-load ở request đầu tiên."""
+    logger.info("Đang khởi tạo Chatbot Server...")
+
+    if not os.path.exists(VECTOR_STORE_PATH):
+        logger.error(f"Vector store không tìm thấy tại: {VECTOR_STORE_PATH}")
+        logger.info("Chạy: python ingestion/vector_data_builder.py")
+    else:
+        logger.info("Vector store đã sẵn sàng; chatbot sẽ được tải khi có request đầu tiên.")
 
     yield
 
@@ -156,10 +233,10 @@ app = FastAPI(
 )
 
 # CORS — chỉ cho phép các origin cụ thể, không dùng "*" trong production
-ALLOW_ORIGINS = os.getenv("ALLOW_ORIGINS", "http://localhost:5173,http://localhost:8001").split(",")
+from app.config import settings as _settings
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=ALLOW_ORIGINS,
+    allow_origins=_settings.ALLOW_ORIGINS,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -207,6 +284,49 @@ async def http_exception_handler(request: Request, exc: HTTPException):
 from chatbot.services.auth import router as auth_router
 app.include_router(auth_router, prefix="/api/v1")
 
+# ------------------------------------------------------------------
+# Payment Router
+# ------------------------------------------------------------------
+from app.routers.payment import router as payment_router
+app.include_router(payment_router, prefix="/api/v1")
+
+
+# ------------------------------------------------------------------
+# /auth/me - Xac thuc token khi app khoi dong
+# (skill_frontend_architecture.md Muc 4.2)
+# ------------------------------------------------------------------
+@app.get("/api/v1/auth/me", tags=["Authentication"])
+async def get_current_user_info(current_user: dict = Depends(get_current_user)):
+    """
+    Tra ve thong tin user hien tai tu JWT token.
+    Frontend goi API nay khi app khoi dong de xac minh token con hop le.
+    """
+    return ApiSuccess(
+        data={
+            "email": current_user.get("email"),
+            "name": current_user.get("name"),
+            "picture": current_user.get("picture"),
+            "is_admin": current_user.get("is_admin", False),
+        }
+    )
+
+
+@app.get("/api/v1/me/balance", tags=["User"])
+async def get_current_user_balance(current_user: dict = Depends(get_current_user)):
+    """Tra ve token balance cua user hien tai."""
+    email = current_user["email"]
+    with UserDB() as db:
+        balance = db.get_token_balance(email)
+        transactions = db.get_token_transactions(email, limit=20)
+
+    return ApiSuccess(
+        data={
+            "user_email": email,
+            "token_balance": balance,
+            "transactions": transactions,
+        }
+    )
+
 
 # ------------------------------------------------------------------
 # API Endpoints
@@ -224,97 +344,243 @@ async def health_check():
     )
 
 
-@app.post("/api/chat", tags=["Chat"])
-async def chat(request: ChatRequest, authorization: str = Header(default=None)):
-    """
-    Gửi câu hỏi và nhận câu trả lời từ chatbot.
-    Tự động lưu lịch sử nếu user đã đăng nhập (có JWT token).
+@app.get("/api/v1/chat/conversations", tags=["Conversations"])
+async def list_chat_conversations(
+    limit: int = 100,
+    offset: int = 0,
+    current_user: dict = Depends(get_current_user),
+):
+    """Danh sách hội thoại của tài khoản đang đăng nhập."""
+    with UserDB() as db:
+        conversations = db.list_conversations(current_user["email"], limit=limit, offset=offset)
+    return ApiSuccess(data={"conversations": conversations})
 
-    Args:
-        request: ChatRequest chứa câu hỏi.
-        authorization: JWT Bearer token (optional).
 
-    Returns:
-        ApiSuccess chứa ChatResponseData.
-    """
-    bot = get_chatbot()
+@app.post("/api/v1/chat/conversations", tags=["Conversations"])
+async def create_chat_conversation(
+    request: ConversationCreateRequest,
+    current_user: dict = Depends(get_current_user),
+):
+    """Tạo hội thoại mới cho tài khoản đang đăng nhập."""
+    with UserDB() as db:
+        conversation = db.create_conversation(current_user["email"], title=request.title)
+    return ApiSuccess(data={"conversation": conversation})
 
-    if not request.question.strip():
+
+@app.get("/api/v1/chat/conversations/{conversation_id}/messages", tags=["Conversations"])
+async def get_chat_conversation_messages(
+    conversation_id: str,
+    current_user: dict = Depends(get_current_user),
+):
+    """Lấy messages của một hội thoại thuộc user."""
+    with UserDB() as db:
+        messages = db.get_conversation_messages(current_user["email"], conversation_id)
+    if messages is None:
         raise HTTPException(
-            status_code=400,
+            status_code=404,
             detail=ApiError(
-                message="Câu hỏi không được để trống.",
-                error_code="EMPTY_QUESTION"
+                message="Cuộc hội thoại không tồn tại.",
+                error_code="CONVERSATION_NOT_FOUND"
             ).model_dump()
         )
+    return ApiSuccess(data={"messages": messages})
 
-    user_email = get_user_email_from_token(authorization)
-    start_time = time.time()
+
+@app.patch("/api/v1/chat/conversations/{conversation_id}", tags=["Conversations"])
+async def update_chat_conversation(
+    conversation_id: str,
+    request: ConversationUpdateRequest,
+    current_user: dict = Depends(get_current_user),
+):
+    """Đổi title hội thoại."""
+    with UserDB() as db:
+        conversation = db.update_conversation_title(
+            current_user["email"], conversation_id, request.title
+        )
+    if not conversation:
+        raise HTTPException(
+            status_code=404,
+            detail=ApiError(
+                message="Cuộc hội thoại không tồn tại.",
+                error_code="CONVERSATION_NOT_FOUND"
+            ).model_dump()
+        )
+    return ApiSuccess(data={"conversation": conversation})
+
+
+@app.delete("/api/v1/chat/conversations/{conversation_id}", tags=["Conversations"])
+async def delete_chat_conversation(
+    conversation_id: str,
+    current_user: dict = Depends(get_current_user),
+):
+    """Xóa hội thoại thuộc user."""
+    with UserDB() as db:
+        deleted = db.delete_conversation(current_user["email"], conversation_id)
+    if not deleted:
+        raise HTTPException(
+            status_code=404,
+            detail=ApiError(
+                message="Cuộc hội thoại không tồn tại.",
+                error_code="CONVERSATION_NOT_FOUND"
+            ).model_dump()
+        )
+    return ApiSuccess(message="Đã xóa hội thoại", data={"deleted": True})
+
+
+@app.post("/api/v1/chat/conversations/{conversation_id}/messages", tags=["Conversations"])
+async def send_chat_conversation_message(
+    conversation_id: str,
+    request: ConversationMessageRequest,
+    current_user: dict = Depends(get_current_user),
+):
+    """Gửi message trong một hội thoại, lưu DB và trừ token backend-side."""
+    question = validate_question(request.question)
+    user_email = current_user["email"]
+
+    with UserDB() as db:
+        balance = db.get_token_balance(user_email)
+        if balance <= 0:
+            raise_insufficient_tokens()
+        if not db.get_conversation(user_email, conversation_id):
+            raise HTTPException(
+                status_code=404,
+                detail=ApiError(
+                    message="Cuộc hội thoại không tồn tại.",
+                    error_code="CONVERSATION_NOT_FOUND"
+                ).model_dump()
+            )
 
     try:
-        input_state = {
-            "question": request.question,
-            "generation": "",
-            "documents": [],
-            "prompt": "",
-        }
+        answer, sources, response_time, num_docs = run_chat_workflow(question, request.prompt or "")
+        input_tokens = get_chat_token_count(question)
+        output_tokens = get_chat_token_count(answer)
 
-        output_state = bot.compiled_workflow.invoke(input_state)
+        with UserDB() as db:
+            saved = db.save_chat_exchange_and_debit(
+                user_email=user_email,
+                conversation_id=conversation_id,
+                question=question,
+                answer=answer,
+                sources=sources,
+                response_time=response_time,
+                num_docs=num_docs,
+                input_tokens=input_tokens,
+                output_tokens=output_tokens,
+            )
 
-        elapsed = time.time() - start_time
-        answer = output_state.get("generation", "Không thể tạo câu trả lời.")
-        docs = output_state.get("documents", [])
-
-        sources = []
-        for doc in docs:
-            sources.append({
-                "content": doc.page_content[:500],
-                "source": doc.metadata.get("source", "Không rõ nguồn"),
-                "full_content": doc.page_content,
-            })
-
-        # Lưu lịch sử chat vào DB nếu user đã đăng nhập
-        if user_email:
-            try:
-                with UserDB() as db:
-                    db.save_chat_message(
-                        user_email=user_email,
-                        role="user",
-                        content=request.question,
-                    )
-                    db.save_chat_message(
-                        user_email=user_email,
-                        role="bot",
-                        content=answer,
-                        sources=sources,
-                        response_time=round(elapsed, 2),
-                        num_docs=len(docs),
-                    )
-            except Exception as db_err:
-                logger.warning(f"Không thể lưu lịch sử chat: {db_err}")
+        if not saved:
+            raise_insufficient_tokens("Không đủ token để lưu câu trả lời này.")
 
         response_data = ChatResponseData(
             answer=answer,
             sources=sources,
-            response_time=round(elapsed, 2),
-            num_docs_retrieved=len(output_state.get("documents", [])),
-            num_docs_graded=len(docs),
+            response_time=response_time,
+            num_docs_retrieved=num_docs,
+            num_docs_graded=num_docs,
+            token_used=saved["token_used"],
+            conversation_id=conversation_id,
+            balance=saved["balance"],
+        ).model_dump()
+        response_data.update({
+            "user_message": saved["user_message"],
+            "bot_message": saved["bot_message"],
+            "conversation": saved["conversation"],
+        })
+
+        return ApiSuccess(message="Trả lời thành công", data=response_data)
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Lỗi xử lý chat conversation {conversation_id}: {e}", exc_info=True)
+        raise HTTPException(
+            status_code=500,
+            detail=ApiError(
+                message="Lỗi xử lý yêu cầu. Vui lòng thử lại sau.",
+                error_code="CHAT_PROCESSING_ERROR"
+            ).model_dump()
         )
 
-        return ApiSuccess(
-            message="Trả lời thành công",
-            data=response_data.model_dump()
+
+@app.post("/api/chat", tags=["Chat"])
+async def chat(
+    request: ChatRequest,
+    current_user: dict = Depends(get_current_user),
+):
+    """
+    Gửi câu hỏi và nhận câu trả lời từ chatbot.
+    Yêu cầu đăng nhập (JWT token).
+    """
+    question = validate_question(request.question)
+    user_email = current_user["email"]
+
+    try:
+        with UserDB() as db:
+            balance = db.get_token_balance(user_email)
+            if balance <= 0:
+                raise_insufficient_tokens()
+
+            conversation = (
+                db.get_conversation(user_email, request.conversation_id)
+                if request.conversation_id else
+                db.create_conversation(user_email, title=question[:40])
+            )
+
+            if not conversation:
+                raise HTTPException(
+                    status_code=404,
+                    detail=ApiError(
+                        message="Cuộc hội thoại không tồn tại.",
+                        error_code="CONVERSATION_NOT_FOUND"
+                    ).model_dump()
+                )
+
+        answer, sources, response_time, num_docs = run_chat_workflow(question)
+        input_tokens = get_chat_token_count(question)
+        output_tokens = get_chat_token_count(answer)
+
+        with UserDB() as db:
+            saved = db.save_chat_exchange_and_debit(
+                user_email=user_email,
+                conversation_id=conversation["id"],
+                question=question,
+                answer=answer,
+                sources=sources,
+                response_time=response_time,
+                num_docs=num_docs,
+                input_tokens=input_tokens,
+                output_tokens=output_tokens,
+            )
+
+        if not saved:
+            raise_insufficient_tokens("Không đủ token để lưu câu trả lời này.")
+
+        response_data = ChatResponseData(
+            answer=answer,
+            sources=sources,
+            response_time=response_time,
+            num_docs_retrieved=num_docs,
+            num_docs_graded=num_docs,
+            token_used=saved["token_used"],
+            conversation_id=conversation["id"],
+            balance=saved["balance"],
         )
+        data = response_data.model_dump()
+        data.update({
+            "user_message": saved["user_message"],
+            "bot_message": saved["bot_message"],
+            "conversation": saved["conversation"],
+        })
+
+        return ApiSuccess(message="Trả lời thành công", data=data)
 
     except HTTPException:
         raise
     except Exception as e:
-        elapsed = time.time() - start_time
         logger.error(f"Lỗi xử lý chat: {e}", exc_info=True)
         raise HTTPException(
             status_code=500,
             detail=ApiError(
-                message=f"Lỗi xử lý: {str(e)}",
+                message="Lỗi xử lý yêu cầu. Vui lòng thử lại sau.",
                 error_code="CHAT_PROCESSING_ERROR"
             ).model_dump()
         )
@@ -369,7 +635,53 @@ async def clear_chat_history(current_user: dict = Depends(get_current_user)):
 # Async Task Polling (skill_async_task_polling.md)
 # Dùng cho các tác vụ AI nặng (background processing)
 # ------------------------------------------------------------------
-task_store: dict = {}  # In-memory store cho task status
+TASK_RESULT_TTL_SECONDS = int(os.getenv("TASK_RESULT_TTL_SECONDS", "600"))
+TASK_PROCESSING_TIMEOUT_SECONDS = int(os.getenv("TASK_PROCESSING_TIMEOUT_SECONDS", "1800"))
+TASK_CLEANUP_INTERVAL_SECONDS = int(os.getenv("TASK_CLEANUP_INTERVAL_SECONDS", "60"))
+
+task_store: dict[str, dict] = {}  # In-memory store cho task status
+task_store_lock = RLock()
+last_task_cleanup = 0.0
+
+
+def _set_task_status(task_id: str, values: dict) -> None:
+    """Cập nhật task store có lock để tránh race giữa worker và polling."""
+    with task_store_lock:
+        current = task_store.get(task_id, {})
+        task_store[task_id] = {
+            **current,
+            **values,
+            "updated_at": time.time(),
+        }
+
+
+def _cleanup_task_store(force: bool = False) -> None:
+    """Dọn task cũ theo TTL để tránh leak RAM."""
+    global last_task_cleanup
+
+    now = time.time()
+    if not force and now - last_task_cleanup < TASK_CLEANUP_INTERVAL_SECONDS:
+        return
+
+    with task_store_lock:
+        last_task_cleanup = now
+
+        for task_id, task in list(task_store.items()):
+            status = task.get("status")
+            updated_at = float(task.get("updated_at", task.get("start_time", now)))
+            start_time = float(task.get("start_time", updated_at))
+
+            if status == "processing" and now - start_time > TASK_PROCESSING_TIMEOUT_SECONDS:
+                task_store[task_id] = {
+                    **task,
+                    "status": "failed",
+                    "error": "Task quá thời gian xử lý.",
+                    "updated_at": now,
+                }
+                continue
+
+            if status in {"done", "failed"} and now - updated_at > TASK_RESULT_TTL_SECONDS:
+                del task_store[task_id]
 
 
 class TaskRequest(BaseModel):
@@ -378,17 +690,16 @@ class TaskRequest(BaseModel):
     prompt: Optional[str] = None
 
 
-def _heavy_chat_worker(task_id: str, question: str, prompt: str, user_email: str = None):
+def _heavy_chat_worker(
+    task_id: str,
+    question: str,
+    prompt: str,
+    user_email: str,
+):
     """
     Worker chạy trong background thread cho tác vụ AI nặng.
     Hàm đồng bộ (def) để FastAPI chạy trong ThreadPool riêng,
     tránh gây nghẽn Event Loop.
-
-    Args:
-        task_id: UUID của task.
-        question: Câu hỏi cần xử lý.
-        prompt: Custom prompt (optional).
-        user_email: Email user để lưu lịch sử.
     """
     try:
         bot = get_chatbot()
@@ -414,25 +725,43 @@ def _heavy_chat_worker(task_id: str, question: str, prompt: str, user_email: str
                 "source": doc.metadata.get("source", "Không rõ nguồn"),
             })
 
+        input_tokens = get_chat_token_count(question)
+        output_tokens = get_chat_token_count(answer)
+        token_used = input_tokens + output_tokens
+
+        with UserDB() as db:
+            balance = db.debit_user_tokens(user_email, token_used, f"async_chat:{task_id}")
+        if balance is None:
+            _set_task_status(task_id, {
+                "status": "failed",
+                "error": "INSUFFICIENT_TOKENS",
+            })
+            return
+
         # Cập nhật store
-        task_store[task_id] = {
+        _set_task_status(task_id, {
             "status": "done",
             "result": {
                 "answer": answer,
                 "sources": sources,
                 "response_time": round(elapsed, 2),
                 "num_docs": len(docs),
+                "token_used": token_used,
             }
-        }
+        })
 
         # Lưu lịch sử nếu có user
         if user_email:
             try:
                 with UserDB() as db:
-                    db.save_chat_message(user_email=user_email, role="user", content=question)
+                    db.save_chat_message(
+                        user_email=user_email, role="user", content=question,
+                        token_used=input_tokens
+                    )
                     db.save_chat_message(
                         user_email=user_email, role="bot", content=answer,
-                        sources=sources, response_time=round(elapsed, 2), num_docs=len(docs)
+                        sources=sources, response_time=round(elapsed, 2),
+                        num_docs=len(docs), token_used=output_tokens
                     )
             except Exception as db_err:
                 logger.warning(f"Không thể lưu lịch sử task: {db_err}")
@@ -441,44 +770,40 @@ def _heavy_chat_worker(task_id: str, question: str, prompt: str, user_email: str
 
     except Exception as e:
         logger.error(f"Task {task_id} thất bại: {e}", exc_info=True)
-        task_store[task_id] = {
+        _set_task_status(task_id, {
             "status": "failed",
             "error": str(e),
-        }
+        })
 
 
 @app.post("/api/task/chat", tags=["Async Task"])
 async def start_chat_task(
     request: TaskRequest,
     background_tasks: BackgroundTasks,
-    authorization: str = Header(default=None),
+    current_user: dict = Depends(get_current_user),
 ):
     """
     Khởi tạo tác vụ chat bất đồng bộ (background).
     Trả về task_id ngay lập tức, frontend polling để lấy kết quả.
-
-    Dùng cho các câu hỏi phức tạp cần xử lý lâu (>30s).
+    Yêu cầu đăng nhập (JWT token).
     """
-    get_chatbot()  # Kiểm tra chatbot sẵn sàng
-
-    if not request.question.strip():
-        raise HTTPException(
-            status_code=400,
-            detail=ApiError(
-                message="Câu hỏi không được để trống.",
-                error_code="EMPTY_QUESTION"
-            ).model_dump()
-        )
-
+    question = validate_question(request.question)
     task_id = str(uuid.uuid4())
-    user_email = get_user_email_from_token(authorization)
+    user_email = current_user["email"]
+
+    with UserDB() as db:
+        if db.get_token_balance(user_email) <= 0:
+            raise_insufficient_tokens()
+
+    get_chatbot()  # Kiểm tra chatbot sẵn sàng sau khi token hợp lệ
 
     # Đánh dấu trạng thái đang xử lý
-    task_store[task_id] = {"status": "processing", "start_time": time.time()}
+    _cleanup_task_store()
+    _set_task_status(task_id, {"status": "processing", "start_time": time.time()})
 
     # Đẩy vào background task
     background_tasks.add_task(
-        _heavy_chat_worker, task_id, request.question, request.prompt, user_email
+        _heavy_chat_worker, task_id, question, request.prompt, user_email
     )
 
     return ApiSuccess(
@@ -493,7 +818,11 @@ async def get_task_status(task_id: str):
     Kiểm tra trạng thái tác vụ bất đồng bộ.
     Frontend gọi API này mỗi 2-3 giây để polling kết quả.
     """
-    task = task_store.get(task_id)
+    _cleanup_task_store()
+    with task_store_lock:
+        task = task_store.get(task_id)
+        task = dict(task) if task else None
+
     if not task:
         raise HTTPException(
             status_code=404,
@@ -507,13 +836,42 @@ async def get_task_status(task_id: str):
 
     if task["status"] == "done":
         response_data["result"] = task["result"]
-        # Xóa khỏi store sau khi trả kết quả (tiết kiệm memory)
-        del task_store[task_id]
     elif task["status"] == "failed":
         response_data["error"] = task.get("error", "Lỗi không xác định")
-        del task_store[task_id]
 
     return ApiSuccess(data=response_data)
+
+
+# ------------------------------------------------------------------
+# Safe File Download (skill_security_authentication.md Muc 4)
+# Chong Path Traversal voi os.path.basename()
+# ------------------------------------------------------------------
+SAFE_DOWNLOAD_DIR = PROJECT_ROOT / "utils" / "download"
+
+
+@app.get("/api/v1/download/{filename}", tags=["File"])
+async def download_file(filename: str):
+    """
+    Tai file tu thu muc an toan (utils/download/).
+    Chong Path Traversal: Loai bo moi ky tu '../' bang os.path.basename().
+    """
+    # 1. Triet tieu cac chuoi "../" nguy hiem
+    safe_filename = os.path.basename(filename)
+
+    # 2. Rap vao duong dan goc mot cach an toan
+    file_path = SAFE_DOWNLOAD_DIR / safe_filename
+
+    # 3. Kiem tra file ton tai
+    if not file_path.exists():
+        raise HTTPException(
+            status_code=404,
+            detail=ApiError(
+                message="File khong ton tai.",
+                error_code="FILE_NOT_FOUND"
+            ).model_dump()
+        )
+
+    return FileResponse(str(file_path))
 
 
 # ------------------------------------------------------------------
@@ -526,7 +884,7 @@ if FRONTEND_DIR.exists():
 
     @app.get("/", tags=["Frontend"])
     async def serve_frontend():
-        """Serve trang chủ frontend."""
+        """Serve trang chu frontend."""
         return FileResponse(str(FRONTEND_DIR / "index.html"))
 
 

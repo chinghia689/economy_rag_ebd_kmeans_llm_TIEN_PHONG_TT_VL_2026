@@ -19,6 +19,11 @@ venv/
 .vscode
 .idea
 
+# Secrets
+.env
+.env.*
+!.env.example
+
 # Notebooks
 *.ipynb
 .ipynb_checkpoints

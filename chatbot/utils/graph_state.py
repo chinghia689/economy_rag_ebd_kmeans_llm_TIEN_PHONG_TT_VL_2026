@@ -1,4 +1,4 @@
-from typing import List
+from typing import Any, List
 from typing_extensions import TypedDict
 
 
@@ -23,4 +23,7 @@ class GraphState(TypedDict, total=False):
     generation: str
     documents: List
     prompt: str
+    query_parts: List[str]
+    retrieval_debug: List[dict[str, Any]]
+    algorithm: str
 

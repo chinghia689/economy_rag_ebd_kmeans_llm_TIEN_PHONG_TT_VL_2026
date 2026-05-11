@@ -14,11 +14,12 @@ Sử dụng:
     async def admin_route(admin: dict = Depends(get_current_admin)):
         # admin đã được xác thực + kiểm tra quyền
 
-Tham chiếu: docs/DOCS-main/skill_security_authentication.md Mục 1 & 3.
+Tham chiếu: docs/DOCS-main/skill_security_authentication.md Mục 1, 3, 7.
 """
 
 from fastapi import Depends, HTTPException, Header
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
+from passlib.context import CryptContext
 
 from chatbot.utils.jwt_utils import verify_jwt_token
 from chatbot.utils.base_db import UserDB
@@ -30,26 +31,65 @@ logger = get_logger(__name__)
 # FastAPI Security scheme cho Swagger UI
 security_scheme = HTTPBearer(auto_error=False)
 
+# Bcrypt context cho hash mat khau (skill_security_authentication.md Muc 7)
+pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
+
+
+# ------------------------------------------------------------------
+# Password Hashing (skill_security_authentication.md Muc 7)
+# ------------------------------------------------------------------
+
+def hash_password(plain_password: str) -> str:
+    """
+    Ma hoa mat khau truoc khi luu vao DB.
+    bcrypt tu dong them 'salt' ngau nhien vao moi lan hash.
+
+    Args:
+        plain_password: Mat khau dang plain text.
+
+    Returns:
+        Chuoi hash bcrypt.
+    """
+    return pwd_context.hash(plain_password)
+
+
+def verify_password(plain_password: str, hashed_password: str) -> bool:
+    """
+    So sanh mat khau nguoi dung nhap voi hash trong DB.
+
+    Args:
+        plain_password: Mat khau nguoi dung nhap.
+        hashed_password: Hash bcrypt da luu trong DB.
+
+    Returns:
+        True neu khop, False neu sai.
+    """
+    return pwd_context.verify(plain_password, hashed_password)
+
+
+# ------------------------------------------------------------------
+# JWT Dependency: get_current_user
+# ------------------------------------------------------------------
 
 def get_current_user(
     credentials: HTTPAuthorizationCredentials = Depends(security_scheme),
 ) -> dict:
     """
-    FastAPI Dependency: Xác thực JWT token và trả về thông tin user.
+    FastAPI Dependency: Xac thuc JWT token va tra ve thong tin user.
 
-    Luồng xử lý:
-        1. Giải mã JWT token từ Authorization header.
-        2. Truy vấn lại DB để đảm bảo user chưa bị xóa hoặc đổi quyền.
-        3. Trả về dict chứa thông tin user.
+    Luong xu ly:
+        1. Giai ma JWT token tu Authorization header.
+        2. Truy van lai DB de dam bao user chua bi xoa hoac doi quyen.
+        3. Tra ve dict chua thong tin user.
 
     Args:
-        credentials: Bearer token từ Authorization header.
+        credentials: Bearer token tu Authorization header.
 
     Returns:
-        Dict chứa thông tin user từ database.
+        Dict chua thong tin user tu database.
 
     Raises:
-        HTTPException 401: Nếu token thiếu, hết hạn, hoặc user không tồn tại.
+        HTTPException 401: Neu token thieu, het han, hoac user khong ton tai.
     """
     if not credentials:
         raise HTTPException(
@@ -82,40 +122,41 @@ def get_current_user(
             ).model_dump()
         )
 
-    # Luôn truy vấn lại DB để đảm bảo user chưa bị xóa hoặc đổi quyền
+    # Luon truy van lai DB de dam bao user chua bi xoa hoac doi quyen
     with UserDB() as db:
         user = db.get_user_by_email(email)
 
     if not user:
-        # User tồn tại trong token nhưng không có trong DB
-        # Có thể do user mới đăng nhập lần đầu qua Google
-        # Tạo user từ payload token
-        logger.warning(f"User {email} không tìm thấy trong DB, tạo mới từ token.")
-        with UserDB() as db:
-            user = db.upsert_user(
-                email=email,
-                name=payload.get("name"),
-                picture=payload.get("picture"),
-            )
+        raise HTTPException(
+            status_code=401,
+            detail=ApiError(
+                message="Phiên đăng nhập không còn hợp lệ. Vui lòng đăng nhập lại.",
+                error_code="USER_NOT_FOUND"
+            ).model_dump()
+        )
 
     return user
 
+
+# ------------------------------------------------------------------
+# RBAC Dependency: get_current_admin
+# ------------------------------------------------------------------
 
 def get_current_admin(
     current_user: dict = Depends(get_current_user),
 ) -> dict:
     """
-    FastAPI Dependency: Kiểm tra quyền admin.
-    Kế thừa từ get_current_user (Lớp bảo vệ 2 - RBAC).
+    FastAPI Dependency: Kiem tra quyen admin.
+    Ke thua tu get_current_user (Lop bao ve 2 - RBAC).
 
     Args:
-        current_user: User đã xác thực từ get_current_user.
+        current_user: User da xac thuc tu get_current_user.
 
     Returns:
-        Dict chứa thông tin admin user.
+        Dict chua thong tin admin user.
 
     Raises:
-        HTTPException 403: Nếu user không phải admin.
+        HTTPException 403: Neu user khong phai admin.
     """
     if not current_user.get("is_admin"):
         raise HTTPException(

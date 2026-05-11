@@ -17,9 +17,13 @@ class LLM:
     """
 
     def __init__(
-        self, temperature: float = 0.01, max_tokens: int = 4096, n_ctx: int = 4096
+        self, temperature: float | None = None, max_tokens: int = 4096, n_ctx: int = 4096
     ) -> None:
-        self.temperature = temperature
+        self.temperature = (
+            float(os.getenv("LLM_TEMPERATURE", "0"))
+            if temperature is None
+            else temperature
+        )
         self.n_ctx = n_ctx
         self.max_tokens = max_tokens
         self.model = ""
@@ -84,7 +88,7 @@ class LLM:
         """
         llm = ChatGroq(
             api_key=os.environ["GROQ_API_KEY"],
-            model="llama-3.1-8b-instant",
+            model=os.getenv("GROQ_LLM_MODEL_NAME", "llama-3.1-8b-instant"),
             temperature=self.temperature,
         )
         return llm

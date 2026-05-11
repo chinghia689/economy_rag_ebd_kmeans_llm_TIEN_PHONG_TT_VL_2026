@@ -14,7 +14,8 @@ Tham chiếu:
     - docs/DOCS-main/skill_security_authentication.md
 """
 
-import os
+from html import escape
+from urllib.parse import urlencode
 
 import httpx
 from fastapi import APIRouter, Form, HTTPException
@@ -22,6 +23,7 @@ from fastapi.responses import HTMLResponse, RedirectResponse
 
 from chatbot.utils.base_db import UserDB
 from chatbot.utils.jwt_utils import create_jwt_token, verify_jwt_token
+from app.config import settings
 from app.models.schemas import ApiSuccess, ApiError
 from app.logger import get_logger
 
@@ -32,12 +34,9 @@ router = APIRouter(prefix="/auth", tags=["Authentication"])
 # ------------------------------------------------------------------
 # Google OAuth 2.0 Config
 # ------------------------------------------------------------------
-GOOGLE_CLIENT_ID = os.getenv("GOOGLE_CLIENT_ID", "")
-GOOGLE_CLIENT_SECRET = os.getenv("GOOGLE_CLIENT_SECRET", "")
-OAUTH_REDIRECT_URI = os.getenv(
-    "OAUTH_REDIRECT_URI",
-    "http://localhost:8001/api/v1/auth/google/callback/flutter"
-)
+GOOGLE_CLIENT_ID = settings.GOOGLE_CLIENT_ID
+GOOGLE_CLIENT_SECRET = settings.GOOGLE_CLIENT_SECRET
+OAUTH_REDIRECT_URI = settings.OAUTH_REDIRECT_URI
 
 GOOGLE_AUTH_URL = "https://accounts.google.com/o/oauth2/v2/auth"
 GOOGLE_TOKEN_URL = "https://oauth2.googleapis.com/token"
@@ -139,11 +138,10 @@ async def google_login_flutter(session_id: str):
         "scope": "openid email profile",
         "state": session_id,
         "access_type": "offline",
-        "prompt": "consent",
+        "prompt": "select_account consent",
     }
 
-    query = "&".join(f"{k}={v}" for k, v in params.items())
-    auth_url = f"{GOOGLE_AUTH_URL}?{query}"
+    auth_url = f"{GOOGLE_AUTH_URL}?{urlencode(params)}"
 
     return RedirectResponse(url=auth_url)
 
@@ -170,6 +168,18 @@ async def google_callback_flutter(code: str, state: str):
             detail=ApiError(
                 message="Google OAuth credentials chưa được cấu hình.",
                 error_code="MISSING_CONFIG"
+            ).model_dump()
+        )
+
+    # Verify session tồn tại và còn hiệu lực TRƯỚC khi dùng code Google
+    with UserDB() as db:
+        session = db.get_login_session(session_id)
+    if not session:
+        raise HTTPException(
+            status_code=400,
+            detail=ApiError(
+                message="Phiên đăng nhập không hợp lệ hoặc đã hết hạn.",
+                error_code="INVALID_SESSION"
             ).model_dump()
         )
 
@@ -245,7 +255,7 @@ async def google_callback_flutter(code: str, state: str):
         )
 
     # Step 5: Trả về trang HTML thành công (không dùng emoji)
-    user_name = user_info.get("name", "bạn")
+    user_name = escape(user_info.get("name") or "bạn")
     success_html = f"""
     <!DOCTYPE html>
     <html lang="vi">
@@ -314,6 +324,11 @@ async def google_callback_flutter(code: str, state: str):
                 background: rgba(102, 126, 234, 0.05);
             }}
         </style>
+        <script>
+            window.setTimeout(function () {{
+                window.close();
+            }}, 1200);
+        </script>
     </head>
     <body>
         <div class="card">

@@ -6,17 +6,17 @@ Tạo và xác thực JWT tokens cho hệ thống đăng nhập.
 Tham chiếu: docs/DOCS-main/skill_security_authentication.md
 """
 
-import os
 from datetime import datetime, timedelta, timezone
 
 import jwt
 
+from app.config import settings
 from app.logger import get_logger
 
 logger = get_logger(__name__)
 
 # Cấu hình JWT
-JWT_SECRET_KEY = os.getenv("JWT_SECRET_KEY", "chatbot-kinhte-default-secret-change-this")
+JWT_SECRET_KEY = settings.JWT_SECRET_KEY
 JWT_ALGORITHM = "HS256"
 JWT_EXPIRATION_HOURS = 24
 

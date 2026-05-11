@@ -108,6 +108,7 @@ async function initAuth() {
  * Show login screen, hide app.
  */
 function showLogin() {
+    cancelPolling();
     loginOverlay.style.display = "flex";
     appContainer.style.display = "none";
     state.isLoggedIn = false;
@@ -470,6 +471,7 @@ function hideTyping() {
  */
 async function sendMessage() {
     const text = chatInput.value.trim();
+    // Guard: chan double-click (skill_frontend_architecture.md Muc 3)
     if (!text || state.isLoading) return;
 
     addMessage("user", text);
@@ -479,6 +481,12 @@ async function sendMessage() {
     state.isLoading = true;
     btnSend.disabled = true;
     chatInput.disabled = true;
+
+    // Hien thi trang thai loading tren nut bam
+    const originalBtnContent = btnSend.innerHTML;
+    btnSend.innerHTML = '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="spin-icon"><path d="M12 2v4M12 18v4M4.93 4.93l2.83 2.83M16.24 16.24l2.83 2.83M2 12h4M18 12h4M4.93 19.07l2.83-2.83M16.24 7.76l2.83-2.83"/></svg>';
+    btnSend.style.opacity = '0.7';
+    btnSend.style.cursor = 'not-allowed';
 
     showTyping();
 
@@ -498,13 +506,24 @@ async function sendMessage() {
 
         if (!res.ok) {
             const err = await res.json();
-            const errMsg = err.message || err.detail || "Không thể xử lý câu hỏi.";
-            addMessage("bot", `[LỖI] ${errMsg}`);
+            const errMsg = err.message || err.detail || "Kh\u00f4ng th\u1ec3 x\u1eed l\u00fd c\u00e2u h\u1ecfi.";
+
+            if (res.status === 401) {
+                // Token het han — logout (skill_frontend_architecture.md M6.3)
+                showToast("Phi\u00ean \u0111\u0103ng nh\u1eadp \u0111\u00e3 h\u1ebft h\u1ea1n. Vui l\u00f2ng \u0111\u0103ng nh\u1eadp l\u1ea1i.", "error");
+                handleLogout();
+                return;
+            } else if (res.status === 403) {
+                showToast("B\u1ea1n kh\u00f4ng c\u00f3 quy\u1ec1n th\u1ef1c hi\u1ec7n h\u00e0nh \u0111\u1ed9ng n\u00e0y.", "error");
+            } else {
+                showToast(errMsg, "error");
+            }
+
+            addMessage("bot", `[L\u1ed6I] ${errMsg}`);
             return;
         }
 
         const data = await res.json();
-        // Xử lý response theo chuẩn ApiSuccess
         const chatData = data.data || data;
 
         addMessage("bot", chatData.answer, {
@@ -519,11 +538,18 @@ async function sendMessage() {
         updateStats();
     } catch (e) {
         hideTyping();
-        addMessage("bot", "[LỖI] Không thể kết nối đến server. Vui lòng kiểm tra server đang chạy.");
+        showToast("M\u1ea5t k\u1ebft n\u1ed1i. Ki\u1ec3m tra l\u1ea1i m\u1ea1ng c\u1ee7a b\u1ea1n.", "error");
+        addMessage("bot", "[L\u1ed6I] Kh\u00f4ng th\u1ec3 k\u1ebft n\u1ed1i \u0111\u1ebfn server. Vui l\u00f2ng ki\u1ec3m tra server \u0111ang ch\u1ea1y.");
+        console.error("Network error:", e);
     } finally {
+        // Dung `finally` de dam bao nut LUON duoc mo khoa
+        // du API tra loi thanh cong hay that bai (skill_frontend_architecture.md Muc 3)
         state.isLoading = false;
         btnSend.disabled = false;
         chatInput.disabled = false;
+        btnSend.innerHTML = originalBtnContent;
+        btnSend.style.opacity = '';
+        btnSend.style.cursor = '';
         chatInput.focus();
     }
 }
@@ -602,6 +628,119 @@ function toggleSidebar() {
     }
     overlay.classList.toggle("active");
 }
+
+// ------------------------------------------------------------------
+// Toast Notification System (skill_frontend_architecture.md Muc 6)
+// Hien thi thong bao loi/success cho nguoi dung thay vi chi console.error
+// ------------------------------------------------------------------
+
+/**
+ * Create toast container if not exists.
+ * @returns {HTMLElement} Toast container element.
+ */
+function getToastContainer() {
+    let container = document.getElementById('toastContainer');
+    if (!container) {
+        container = document.createElement('div');
+        container.id = 'toastContainer';
+        container.style.cssText = `
+            position: fixed;
+            top: 20px;
+            right: 20px;
+            z-index: 10000;
+            display: flex;
+            flex-direction: column;
+            gap: 8px;
+            pointer-events: none;
+        `;
+        document.body.appendChild(container);
+    }
+    return container;
+}
+
+/**
+ * Show toast notification.
+ * @param {string} message - Message to display.
+ * @param {'error'|'success'|'warning'} type - Toast type.
+ */
+function showToast(message, type = 'error') {
+    const container = getToastContainer();
+
+    const toast = document.createElement('div');
+    toast.style.cssText = `
+        pointer-events: auto;
+        padding: 12px 20px;
+        border-radius: 12px;
+        font-family: 'Inter', sans-serif;
+        font-size: 0.9rem;
+        line-height: 1.4;
+        max-width: 380px;
+        box-shadow: 0 8px 30px rgba(0,0,0,0.3);
+        backdrop-filter: blur(12px);
+        animation: toastSlideIn 0.3s ease;
+        display: flex;
+        align-items: center;
+        gap: 10px;
+    `;
+
+    const colors = {
+        error: { bg: 'rgba(239, 68, 68, 0.15)', border: '1px solid rgba(239, 68, 68, 0.3)', color: '#fca5a5', icon: 'X' },
+        success: { bg: 'rgba(52, 211, 153, 0.15)', border: '1px solid rgba(52, 211, 153, 0.3)', color: '#6ee7b7', icon: 'V' },
+        warning: { bg: 'rgba(251, 191, 36, 0.15)', border: '1px solid rgba(251, 191, 36, 0.3)', color: '#fde68a', icon: '!' },
+    };
+
+    const c = colors[type] || colors.error;
+    toast.style.background = c.bg;
+    toast.style.border = c.border;
+    toast.style.color = c.color;
+
+    const iconSpan = document.createElement('span');
+    iconSpan.textContent = c.icon;
+    iconSpan.style.cssText = `
+        font-weight: 700;
+        font-size: 0.85rem;
+        width: 22px; height: 22px;
+        display: flex; align-items: center; justify-content: center;
+        border-radius: 50%;
+        background: ${c.color}22;
+        flex-shrink: 0;
+    `;
+
+    const textSpan = document.createElement('span');
+    textSpan.textContent = message;
+
+    toast.appendChild(iconSpan);
+    toast.appendChild(textSpan);
+    container.appendChild(toast);
+
+    // Tu dong xoa sau 4 giay
+    setTimeout(() => {
+        toast.style.animation = 'toastSlideOut 0.3s ease forwards';
+        setTimeout(() => toast.remove(), 300);
+    }, 4000);
+}
+
+// Inject toast animation CSS
+(function injectToastStyles() {
+    const style = document.createElement('style');
+    style.textContent = `
+        @keyframes toastSlideIn {
+            from { opacity: 0; transform: translateX(40px); }
+            to { opacity: 1; transform: translateX(0); }
+        }
+        @keyframes toastSlideOut {
+            from { opacity: 1; transform: translateX(0); }
+            to { opacity: 0; transform: translateX(40px); }
+        }
+        @keyframes spin {
+            from { transform: rotate(0deg); }
+            to { transform: rotate(360deg); }
+        }
+        .spin-icon { animation: spin 1s linear infinite; }
+    `;
+    document.head.appendChild(style);
+})();
+
 
 // ------------------------------------------------------------------
 // Multi-Tab Logout Sync (skill_security_authentication.md Section 6.4)

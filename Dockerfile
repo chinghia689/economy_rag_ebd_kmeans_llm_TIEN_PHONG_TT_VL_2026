@@ -30,9 +30,9 @@ RUN pip install --no-cache-dir --upgrade pip \
 # ── Copy source code ──
 COPY chatbot/ ./chatbot/
 COPY ingestion/ ./ingestion/
+COPY app/ ./app/
 COPY frontend/ ./frontend/
 COPY chroma_economy_db/ ./chroma_economy_db/
-COPY .env .
 
 # ── Environment ──
 ENV PYTHONUNBUFFERED=1
