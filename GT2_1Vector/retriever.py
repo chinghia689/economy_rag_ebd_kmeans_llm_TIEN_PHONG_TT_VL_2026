@@ -1,0 +1,74 @@
+"""GT2 — Single-vector ERC: 1 query vector vs cluster docs (K-Means)."""
+
+from __future__ import annotations
+
+import hashlib
+from typing import Any
+
+import numpy as np
+from sklearn.cluster import KMeans
+from sklearn.metrics import silhouette_score
+
+from .energy_base_distance import energy_base_distance
+
+
+def _doc_key(doc: Any) -> str:
+    meta = getattr(doc, "metadata", {}) or {}
+    h = hashlib.md5(getattr(doc, "page_content", "").encode()).hexdigest()
+    return f"{meta.get('source', '')}:{meta.get('page', '')}:{h}"
+
+
+def _best_kmeans(vectors: np.ndarray) -> tuple[np.ndarray, int]:
+    n = len(vectors)
+    if n <= 2:
+        return np.zeros(n, dtype=int), 1
+    best_score, best_k, best_labels = -1.0, 2, None
+    for k in range(2, min(10, n - 1) + 1):
+        labels = KMeans(n_clusters=k, random_state=42, n_init="auto").fit_predict(vectors)
+        score = silhouette_score(vectors, labels)
+        if score > best_score:
+            best_score, best_k, best_labels = score, k, labels
+    print(f"   -> K tối ưu = {best_k} (Silhouette = {best_score:.4f})")
+    return best_labels, best_k
+
+
+class SingleVectorERC:
+    """
+    X = [embed(câu hỏi)] — chỉ 1 vector.
+    Y = doc vectors trong từng cụm K-Means.
+    Chọn cụm có Energy Distance nhỏ nhất.
+    """
+
+    def __init__(self, vector_store: Any, embeddings: Any, k_retrieve: int = 40, n_top_clusters: int = 1):
+        self.retriever = vector_store.as_retriever(search_kwargs={"k": k_retrieve})
+        self.embeddings = embeddings
+        self.n_top_clusters = n_top_clusters
+
+    def retrieve(self, query: str) -> list[Any]:
+        if not (query or "").strip():
+            return []
+
+        docs = self.retriever.invoke(query)
+        if not docs:
+            print("   -> ⚠️ Không tìm thấy docs.")
+            return []
+
+        doc_vecs = np.array(self.embeddings.embed_documents([d.page_content for d in docs]))
+        query_vec = np.array(self.embeddings.embed_query(query)).reshape(1, -1)
+        print(f"   -> 1 query vec | {len(docs)} candidate docs")
+
+        labels, k = _best_kmeans(doc_vecs)
+        clusters = [
+            (cid, energy_base_distance(query_vec, doc_vecs[labels == cid]))
+            for cid in range(k)
+            if (labels == cid).any()
+        ]
+        clusters.sort(key=lambda x: x[1])
+
+        selected = clusters[: self.n_top_clusters]
+        for i, (cid, ed) in enumerate(selected):
+            print(f"   -> {'🏆' if i == 0 else '📌'} Cụm {cid} — ED = {ed:.4f}")
+
+        final = [docs[i] for cid, _ in selected for i in np.where(labels == cid)[0]]
+        print(f"   -> ✅ Trả về {len(final)} docs")
+        return final
