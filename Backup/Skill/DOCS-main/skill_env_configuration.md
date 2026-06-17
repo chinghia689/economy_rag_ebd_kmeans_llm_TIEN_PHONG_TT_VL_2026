@@ -22,8 +22,8 @@ ENV=development
 LLM_NAME=openai
 # Ho tro: openai, google, grok
 OPENAI_LLM_MODEL_NAME=gpt-4o-mini
-KEY_API_OPENAI=sk-proj-xxxxxxxxxxxxxxxxxxxxxx
-GEMINI_API_KEY=AIzaSy-xxxxxxxxxxxxxxxxxxxxxx
+KEY_API_OPENAI=<OPENAI_API_KEY>
+GEMINI_API_KEY=<GEMINI_API_KEY>
 GEMINI_MODEL=gemini-2.0-flash
 
 EMBEDDING_MODEL_NAME=openai
@@ -46,13 +46,13 @@ DB_NAME=myapp_db
 # === 4. CAU HINH THANH TOAN SEPAY ===
 NAME_WEB=MYAPP
 # Tien to nap tien (VD: MYAPPNAPTOKEN123)
-SEPAY_API_KEY=xxxxxxxxxxxxxxxxxxxxx
-SEPAY_ACCOUNT_NUMBER=123456789
+SEPAY_API_KEY=<SEPAY_API_KEY>
+SEPAY_ACCOUNT_NUMBER=<BANK_ACCOUNT_NUMBER>
 SEPAY_BANK_BRAND=MBBank
 
 # === 5. CAU HINH GOOGLE OAUTH 2.0 ===
-GOOGLE_CLIENT_ID=xxx-xxx.apps.googleusercontent.com
-GOOGLE_CLIENT_SECRET=GOCSPX-xxxxxx
+GOOGLE_CLIENT_ID=<GOOGLE_CLIENT_ID>
+GOOGLE_CLIENT_SECRET=<GOOGLE_CLIENT_SECRET>
 GOOGLE_REDIRECT_URI=http://localhost:2643/api/v1/auth/google/callback
 FRONTEND_URL=http://localhost:5173
 VITE_API_URL=http://localhost:2643

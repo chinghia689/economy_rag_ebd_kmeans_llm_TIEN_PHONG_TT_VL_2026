@@ -117,7 +117,7 @@ class SplitQueryEnergyRetriever:
             print(f"   -> ⚠️ Số docs quá ít ({n}), gom thành 1 cụm.")
             return np.zeros(n, dtype=int), 1
 
-        best_score, best_k, best_labels = -1.0, 2, None
+        best_score, best_k, best_labels = -float("inf"), 2, None
         for k in range(2, min(10, n - 1) + 1):
             labels = KMeans(n_clusters=k, random_state=42, n_init="auto").fit_predict(vectors)
             score = silhouette_score(vectors, labels)

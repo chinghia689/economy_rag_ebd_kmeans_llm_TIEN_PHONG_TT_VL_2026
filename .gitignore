@@ -1,32 +1,36 @@
-# ============================================================
-# BIEN MOI TRUONG — Tuyet doi khong push len Git
-# ============================================================
+# Environment and secrets
 .env
 .env.*
 !.env.example
 
-# ============================================================
-# DATASET LON
-# ============================================================
+# Data and evaluation outputs
 Dataset_economy/
+Evaluate/
+Backup/Evaluate/
+*.xlsx
+*.xls
+*.xlsm
+*.csv
+*.parquet
 
-# ============================================================
-# VECTOR DATABASE (rat nang)
-# ============================================================
+# Vector databases and generated indexes
 chroma_economy_db/
 chroma_ms_marco_db/
 chroma_scifact/
 chroma_db/
 *.sqlite3
+*.sqlite
+*.db
+*.pickle
+*.pkl
+*.npy
 **/data_level0.bin
 **/header.bin
 **/length.bin
 **/link_lists.bin
 **/msmarco_embeddings.npy
 
-# ============================================================
-# PYTHON CACHE & BYTECODE
-# ============================================================
+# Python
 __pycache__/
 *.py[cod]
 *$py.class
@@ -34,48 +38,25 @@ __pycache__/
 *.pyd
 .Python
 *.egg-info/
-
-# ============================================================
-# MOI TRUONG AO PYTHON
-# ============================================================
 .venv/
 venv/
 env/
 ai_env/
 
-# ============================================================
-# STORAGE (Du lieu lon, khong push len Git)
-# ============================================================
+# Frontend
+node_modules/
+dist/
+build/
+.next/
+
+# Runtime storage
 utils/data_vector/
 utils/download/
 utils/upload_temp/
 utils/logs/
 *.log
 
-# ============================================================
-# DATABASE
-# ============================================================
-*.db
-*.sqlite
-
-# ============================================================
-# JUPYTER NOTEBOOK
-# ============================================================
-.ipynb_checkpoints/
-
-# ============================================================
-# FRONTEND BUILD OUTPUT
-# ============================================================
-node_modules/
-frontend/dist/
-frontend/.next/
-frontend/build/
-dist/
-build/
-
-# ============================================================
-# IDE & HE DIEU HANH
-# ============================================================
+# IDE and OS
 .vscode/
 .idea/
 *.swp
@@ -83,14 +64,7 @@ build/
 .DS_Store
 Thumbs.db
 
-# ============================================================
-# CERT & KEY
-# ============================================================
+# Certificates and keys
 *.pem
 *.key
 *.crt
-
-# ============================================================
-# CONDA
-# ============================================================
-.conda/
