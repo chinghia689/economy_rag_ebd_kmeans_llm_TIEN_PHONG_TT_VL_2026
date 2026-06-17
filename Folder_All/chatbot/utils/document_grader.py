@@ -40,14 +40,20 @@ class DocumentGrader:
         )
         response = self.chain.invoke({"documents": formatted_docs, "question": question})
         filtered_docs = []
-        try:
-            match = re.search(r'\[.*?\]', response)
-            if match:
-                indices = json.loads(match.group(0))
-                for idx in indices:
-                    real_idx = idx - 1
-                    if 0 <= real_idx < len(retrieved_docs):
-                        filtered_docs.append(retrieved_docs[real_idx])
-        except Exception as e:
-            logger.warning(f"Lỗi parse JSON từ LLM: {response}. Chi tiết: {e}")
+        indices = None
+        for candidate in reversed(re.findall(r"\[[^\[\]]*\]", response)):
+            try:
+                value = json.loads(candidate)
+            except Exception:
+                continue
+            if isinstance(value, list) and all(isinstance(x, int) for x in value):
+                indices = value
+                break
+        if indices is None:
+            logger.warning(f"Không parse được JSON array indices từ LLM: {response!r}")
+        else:
+            for idx in indices:
+                real_idx = idx - 1
+                if 0 <= real_idx < len(retrieved_docs):
+                    filtered_docs.append(retrieved_docs[real_idx])
         return filtered_docs

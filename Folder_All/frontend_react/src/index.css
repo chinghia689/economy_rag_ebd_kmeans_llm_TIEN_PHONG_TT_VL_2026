@@ -38,9 +38,18 @@
 }
 
 html, body, #root {
-  height: 100%;
   width: 100%;
   overflow: hidden;
+}
+
+html,
+body {
+  height: 100%;
+}
+
+#root {
+  height: 100dvh;
+  min-height: 0;
 }
 
 body {
@@ -49,6 +58,7 @@ body {
   color: var(--text-primary);
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
+  overscroll-behavior: none;
 }
 
 /* ── Scrollbar ── */
@@ -113,4 +123,29 @@ body {
 }
 .animate-slide-in-right {
   animation: slideInRight 0.4s ease forwards;
+}
+
+
+/* ── Accessibility / Stability ── */
+:focus-visible {
+  outline: 2px solid var(--accent-primary);
+  outline-offset: 2px;
+}
+
+button:focus-visible, a:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-visible {
+  outline: 2px solid var(--accent-primary);
+  outline-offset: 2px;
+}
+
+img {
+  max-width: 100%;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    scroll-behavior: auto !important;
+    transition-duration: 0.01ms !important;
+  }
 }

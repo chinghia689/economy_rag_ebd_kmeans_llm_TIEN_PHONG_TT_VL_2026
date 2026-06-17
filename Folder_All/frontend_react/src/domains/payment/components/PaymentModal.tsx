@@ -1,6 +1,7 @@
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef, useCallback } from 'react';
 import { createPayment, checkPaymentStatus, getErrorMessage } from '../../../services/api';
-import { HiOutlineXMark, HiOutlineClipboardDocument } from 'react-icons/hi2';
+import { HiOutlineXMark, HiOutlineClipboardDocument, HiOutlineClock, HiOutlineCheckCircle, HiOutlineExclamationTriangle } from 'react-icons/hi2';
+import { useFocusTrap } from '../../../hooks/useFocusTrap';
 import type { PaymentCreateData } from '../../../types';
 import { useAuthStore } from '../../auth/authStore';
 
@@ -10,9 +11,9 @@ interface PaymentModalProps {
 }
 
 const packages = [
-  { id: 'basic', name: 'Gói Cơ Bản', tokens: 100, amount: 20000, badge: '🥉' },
-  { id: 'pro', name: 'Gói Pro', tokens: 500, amount: 80000, badge: '🥈' },
-  { id: 'premium', name: 'Gói Premium', tokens: 2000, amount: 250000, badge: '🥇' },
+  { id: 'basic', name: 'Starter', tokens: 100, amount: 30000, badge: 'S' },
+  { id: 'pro', name: 'Research', tokens: 500, amount: 120000, badge: 'R' },
+  { id: 'premium', name: 'Team', tokens: 1200, amount: 250000, badge: 'T' },
 ];
 
 export default function PaymentModal({ isOpen, onClose }: PaymentModalProps) {
@@ -22,10 +23,15 @@ export default function PaymentModal({ isOpen, onClose }: PaymentModalProps) {
   const [paymentData, setPaymentData] = useState<PaymentCreateData | null>(null);
   const [error, setError] = useState('');
   const [copied, setCopied] = useState<string | null>(null);
+  const [expiresAt, setExpiresAt] = useState<number | null>(null);
+  const [now, setNow] = useState(Date.now());
   const pollingRef = useRef<number | null>(null);
+  const modalRef = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
+    const timer = window.setInterval(() => setNow(Date.now()), 1000);
     return () => {
+      clearInterval(timer);
       if (pollingRef.current) clearInterval(pollingRef.current);
     };
   }, []);
@@ -35,7 +41,11 @@ export default function PaymentModal({ isOpen, onClose }: PaymentModalProps) {
       setError('');
       const res = await createPayment(selectedPkg.id);
       if (res.success && res.data) {
+        const expiresAtMs = res.data.expires_at
+          ? Date.parse(res.data.expires_at)
+          : Date.now() + (res.data.expires_in_seconds || 300) * 1000;
         setPaymentData(res.data);
+        setExpiresAt(Number.isNaN(expiresAtMs) ? Date.now() + 5 * 60 * 1000 : expiresAtMs);
         setStep('transfer');
       } else {
         setError(res.message || 'Lỗi tạo giao dịch.');
@@ -61,16 +71,28 @@ export default function PaymentModal({ isOpen, onClose }: PaymentModalProps) {
           }
           void refreshBalance();
           setStep('done');
+        } else if (res.success && res.data?.status === 'expired') {
+          if (pollingRef.current) {
+            clearInterval(pollingRef.current);
+            pollingRef.current = null;
+          }
+          setPaymentData(null);
+          setExpiresAt(null);
+          setStep('select');
+          setError('Giao dịch đã quá 5 phút và đã bị xóa. Vui lòng tạo giao dịch mới.');
+        } else if (res.success && res.data?.expires_at) {
+          const nextExpiresAt = Date.parse(res.data.expires_at);
+          if (!Number.isNaN(nextExpiresAt)) setExpiresAt(nextExpiresAt);
         }
       } catch {
         // keep polling
       }
     }, 3000);
 
-    // Timeout 10 phút
+    // Timeout 5 phút
     setTimeout(() => {
       if (pollingRef.current) clearInterval(pollingRef.current);
-    }, 600000);
+    }, 300000);
   };
 
   const handleCopy = (text: string, key: string) => {
@@ -79,20 +101,51 @@ export default function PaymentModal({ isOpen, onClose }: PaymentModalProps) {
     setTimeout(() => setCopied(null), 2000);
   };
 
-  const handleClose = () => {
+  const handleClose = useCallback(() => {
     if (pollingRef.current) clearInterval(pollingRef.current);
     setStep('select');
     setPaymentData(null);
+    setExpiresAt(null);
     setError('');
     onClose();
-  };
+  }, [onClose]);
+
+  useFocusTrap(isOpen, modalRef, handleClose);
+
+  useEffect(() => {
+    if (!expiresAt || (step !== 'transfer' && step !== 'checking')) return;
+    if (now < expiresAt) return;
+
+    if (pollingRef.current) {
+      clearInterval(pollingRef.current);
+      pollingRef.current = null;
+    }
+    if (paymentData?.payment_id) {
+      void checkPaymentStatus(paymentData.payment_id).catch(() => undefined);
+    }
+    setPaymentData(null);
+    setExpiresAt(null);
+    setStep('select');
+    setError('Giao dịch đã quá 5 phút và đã bị xóa. Vui lòng tạo giao dịch mới.');
+  }, [expiresAt, now, paymentData?.payment_id, step]);
 
   if (!isOpen) return null;
 
+  const secondsLeft = Math.max(0, Math.floor(((expiresAt || Date.now()) - now) / 1000));
+  const minutesLeft = Math.floor(secondsLeft / 60);
+  const secondsRemainder = String(secondsLeft % 60).padStart(2, '0');
+
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm animate-fade-in">
-      <div className="relative w-full max-w-lg mx-4 p-8 rounded-2xl bg-[var(--bg-card)] border border-[var(--border-color)]
-                      shadow-2xl animate-fade-in-up max-h-[90vh] overflow-y-auto">
+      <div
+        ref={modalRef}
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="payment-title"
+        tabIndex={-1}
+        className="relative w-full max-w-lg mx-4 p-8 rounded-2xl bg-[var(--bg-card)] border border-[var(--border-color)]
+                      shadow-2xl animate-fade-in-up max-h-[90vh] overflow-y-auto"
+      >
         {/* Close */}
         <button
           onClick={handleClose}
@@ -102,8 +155,8 @@ export default function PaymentModal({ isOpen, onClose }: PaymentModalProps) {
           <HiOutlineXMark className="w-5 h-5" />
         </button>
 
-        <h2 className="text-xl font-bold text-[var(--text-primary)] mb-1">💳 Nạp Token</h2>
-        <p className="text-sm text-[var(--text-secondary)] mb-6">Chọn gói và chuyển khoản để nạp token</p>
+        <h2 id="payment-title" className="text-xl font-bold text-[var(--text-primary)] mb-1">Nạp credit</h2>
+        <p className="text-sm text-[var(--text-secondary)] mb-6">Chọn gói, quét QR và theo dõi trạng thái thanh toán realtime trong 5 phút.</p>
 
         {error && (
           <div className="mb-4 p-3 rounded-xl bg-[var(--danger)]/10 border border-[var(--danger)]/30
@@ -128,10 +181,10 @@ export default function PaymentModal({ isOpen, onClose }: PaymentModalProps) {
                     }
                   `}
                 >
-                  <span className="text-2xl">{pkg.badge}</span>
+                  <span className="flex h-9 w-9 items-center justify-center rounded-lg border border-[var(--border-color)] bg-[var(--bg-primary)] text-sm font-bold text-[var(--text-primary)]">{pkg.badge}</span>
                   <div className="flex-1">
                     <p className="font-semibold text-sm text-[var(--text-primary)]">{pkg.name}</p>
-                    <p className="text-xs text-[var(--text-secondary)]">{pkg.tokens} tokens</p>
+                    <p className="text-xs text-[var(--text-secondary)]">{pkg.tokens.toLocaleString('vi-VN')} câu hỏi</p>
                   </div>
                   <p className="font-bold text-[var(--accent-primary)]">
                     {pkg.amount.toLocaleString('vi-VN')}đ
@@ -145,7 +198,7 @@ export default function PaymentModal({ isOpen, onClose }: PaymentModalProps) {
               className="w-full py-3 rounded-xl bg-gradient-to-r from-[#667eea] to-[#764ba2]
                          text-white font-medium text-sm hover:opacity-90 transition-opacity cursor-pointer"
             >
-              Tiếp tục →
+              Tiếp tục
             </button>
           </div>
         )}
@@ -153,6 +206,17 @@ export default function PaymentModal({ isOpen, onClose }: PaymentModalProps) {
         {/* Step 2: Transfer info */}
         {step === 'transfer' && paymentData && (
           <div className="space-y-4">
+            <div className="grid grid-cols-3 gap-2 text-xs">
+              {['Đang chờ', 'Đã nhận tiền', 'Đã cộng credit'].map((label, index) => (
+                <div key={label} className={`rounded-lg border px-2 py-2 text-center ${index === 0 ? 'border-amber-500/35 bg-amber-500/10 text-amber-200' : 'border-[var(--border-color)] bg-[var(--bg-secondary)] text-[var(--text-muted)]'}`}>{label}</div>
+              ))}
+            </div>
+
+            <div className="flex items-center justify-center gap-2 rounded-lg border border-[var(--border-color)] bg-[var(--bg-secondary)] px-3 py-2 text-sm text-[var(--text-secondary)]">
+              <HiOutlineClock className="h-4 w-4 text-amber-300" />
+              Hết hạn sau {minutesLeft}:{secondsRemainder}
+            </div>
+
             {/* QR Code */}
             <div className="flex flex-col items-center">
               <img
@@ -226,7 +290,7 @@ export default function PaymentModal({ isOpen, onClose }: PaymentModalProps) {
             </div>
 
             <div className="p-3 rounded-xl bg-[var(--warning)]/10 border border-[var(--warning)]/20 text-xs text-[var(--warning)]">
-              ⚠️ Chuyển khoản đúng số tiền và nội dung — hệ thống tự xác nhận
+              <span className="inline-flex items-start gap-2"><HiOutlineExclamationTriangle className="mt-0.5 h-4 w-4 shrink-0" />Chuyển khoản đúng số tiền và nội dung - hệ thống tự xác nhận</span>
             </div>
 
             <button
@@ -234,7 +298,7 @@ export default function PaymentModal({ isOpen, onClose }: PaymentModalProps) {
               className="w-full py-3 rounded-xl bg-gradient-to-r from-[#34d399] to-[#059669]
                          text-white font-medium text-sm hover:opacity-90 transition-opacity cursor-pointer"
             >
-              Tôi đã chuyển khoản ✓
+              Tôi đã chuyển khoản
             </button>
           </div>
         )}
@@ -244,7 +308,7 @@ export default function PaymentModal({ isOpen, onClose }: PaymentModalProps) {
           <div className="text-center py-8">
             <div className="w-12 h-12 mx-auto mb-4 border-2 border-[var(--accent-primary)] border-t-transparent
                             rounded-full animate-spin" />
-            <p className="text-sm text-[var(--text-secondary)]">Đang kiểm tra giao dịch...</p>
+            <p className="text-sm text-[var(--text-secondary)]">Đang chờ SePay xác nhận giao dịch...</p>
             <p className="text-xs text-[var(--text-muted)] mt-2">Hệ thống sẽ tự động xác nhận khi nhận được tiền</p>
           </div>
         )}
@@ -254,11 +318,11 @@ export default function PaymentModal({ isOpen, onClose }: PaymentModalProps) {
           <div className="text-center py-8">
             <div className="w-16 h-16 mx-auto mb-4 rounded-full bg-[var(--success)]/20
                             flex items-center justify-center">
-              <span className="text-3xl">🎉</span>
+              <HiOutlineCheckCircle className="h-8 w-8 text-[var(--success)]" />
             </div>
             <h3 className="text-lg font-bold text-[var(--success)] mb-2">Nạp thành công!</h3>
             <p className="text-sm text-[var(--text-secondary)] mb-6">
-              Bạn đã nạp thành công {selectedPkg.tokens} tokens
+              Bạn đã nạp thành công {selectedPkg.tokens} credit hỏi
             </p>
             <button
               onClick={handleClose}

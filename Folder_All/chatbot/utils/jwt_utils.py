@@ -2,34 +2,31 @@
 JWT Token Utilities.
 
 Tạo và xác thực JWT tokens cho hệ thống đăng nhập.
-
-Tham chiếu: docs/DOCS-main/skill_security_authentication.md
 """
 
 from datetime import datetime, timedelta, timezone
 
 import jwt
 
-from app.config import settings
 from app.logger import get_logger
+from app.runtime_config import get_runtime_setting
 
 logger = get_logger(__name__)
 
-# Cấu hình JWT
-JWT_SECRET_KEY = settings.JWT_SECRET_KEY
 JWT_ALGORITHM = "HS256"
 JWT_EXPIRATION_HOURS = 24
+DEFAULT_DEV_JWT_SECRET = "dev-only-insecure-jwt-secret-change-before-production"
+
+
+def get_jwt_secret() -> str:
+    """Read JWT secret from DB-backed runtime settings."""
+    secret = get_runtime_setting("JWT_SECRET_KEY", DEFAULT_DEV_JWT_SECRET).strip()
+    return secret or DEFAULT_DEV_JWT_SECRET
 
 
 def create_jwt_token(user_data: dict) -> str:
     """
     Tạo JWT token từ thông tin user.
-
-    Args:
-        user_data: Dict chứa thông tin user (email, name, picture, ...).
-
-    Returns:
-        JWT token string.
     """
     payload = {
         "sub": user_data.get("email", ""),
@@ -39,21 +36,15 @@ def create_jwt_token(user_data: dict) -> str:
         "iat": datetime.now(timezone.utc),
         "exp": datetime.now(timezone.utc) + timedelta(hours=JWT_EXPIRATION_HOURS),
     }
-    return jwt.encode(payload, JWT_SECRET_KEY, algorithm=JWT_ALGORITHM)
+    return jwt.encode(payload, get_jwt_secret(), algorithm=JWT_ALGORITHM)
 
 
 def verify_jwt_token(token: str) -> dict | None:
     """
     Giải mã và xác thực JWT token.
-
-    Args:
-        token: JWT token string.
-
-    Returns:
-        Dict chứa payload nếu token hợp lệ, None nếu không hợp lệ hoặc hết hạn.
     """
     try:
-        payload = jwt.decode(token, JWT_SECRET_KEY, algorithms=[JWT_ALGORITHM])
+        payload = jwt.decode(token, get_jwt_secret(), algorithms=[JWT_ALGORITHM])
         return payload
     except jwt.ExpiredSignatureError:
         logger.warning("Token đã hết hạn.")

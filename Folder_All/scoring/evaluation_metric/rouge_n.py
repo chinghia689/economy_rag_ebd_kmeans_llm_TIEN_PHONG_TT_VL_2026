@@ -97,9 +97,5 @@ def rouge_excel(file_path, n=2, out: str = None):
     # Xuất file Excel
     df.to_excel(out_path, index=False)
 
-    # Hiển thị toàn bộ bảng (debug/kiểm tra nhanh)
-    with pd.option_context("display.max_rows", None, "display.max_columns", None):
-        print(df)
-
     print(f"✅ Đã tạo file: {out_path}")
     return out_path

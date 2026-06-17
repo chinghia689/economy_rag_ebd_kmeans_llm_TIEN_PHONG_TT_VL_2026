@@ -4,6 +4,7 @@ import {
   deleteConversation as deleteConversationApi,
   getConversationMessages,
   listConversations,
+  updateConversationTitle as updateConversationTitleApi,
 } from '../../services/api';
 import type { Message, Conversation, Source, ServerConversation, ServerMessage } from '../../types';
 
@@ -23,6 +24,8 @@ interface ChatState {
   setActiveConversation: (id: string) => Promise<void>;
   deleteConversation: (id: string) => Promise<void>;
   clearAllConversations: () => Promise<void>;
+  renameConversation: (id: string, title: string) => Promise<void>;
+  togglePinConversation: (id: string) => void;
 
   addMessage: (msg: Message) => void;
   updateLastBotMessage: (content: string, sources?: Source[], responseTime?: number, tokenUsed?: number) => void;
@@ -36,17 +39,45 @@ interface ChatState {
   getActiveMessages: () => Message[];
 }
 
-function generateId(): string {
-  return Date.now().toString(36) + Math.random().toString(36).substring(2, 8);
-}
-
 function generateTitle(firstMsg: string): string {
   const clean = firstMsg.replace(/\n/g, ' ').trim();
   return clean.length > 40 ? clean.substring(0, 40) + '...' : clean;
 }
 
+
+function loadPinnedIds(): Set<string> {
+  try {
+    return new Set(JSON.parse(localStorage.getItem('chat_pinned_ids') || '[]'));
+  } catch {
+    return new Set();
+  }
+}
+
+function savePinnedIds(ids: Set<string>) {
+  localStorage.setItem('chat_pinned_ids', JSON.stringify([...ids]));
+}
+
+function sortConversations(conversations: Conversation[]): Conversation[] {
+  return [...conversations].sort((a, b) => {
+    if (Boolean(a.isPinned) !== Boolean(b.isPinned)) return a.isPinned ? -1 : 1;
+    return b.updatedAt - a.updatedAt;
+  });
+}
+
 function hasAuthToken(): boolean {
   return Boolean(localStorage.getItem('jwt_token'));
+}
+
+function clearGuestStorage() {
+  try {
+    localStorage.removeItem('chat_conversations');
+    localStorage.removeItem('chat_active_id');
+    Object.keys(localStorage).forEach((key) => {
+      if (key.startsWith('guest_chat_count_')) {
+        localStorage.removeItem(key);
+      }
+    });
+  } catch { /* ignore storage errors */ }
 }
 
 function saveToStorage(conversations: Conversation[], activeId: string | null) {
@@ -57,17 +88,6 @@ function saveToStorage(conversations: Conversation[], activeId: string | null) {
   } catch { /* ignore storage errors */ }
 }
 
-function loadFromStorage(): { conversations: Conversation[]; activeId: string | null } {
-  try {
-    const convRaw = localStorage.getItem('chat_conversations');
-    const activeId = localStorage.getItem('chat_active_id') || null;
-    const conversations = convRaw ? JSON.parse(convRaw) : [];
-    return { conversations, activeId };
-  } catch {
-    return { conversations: [], activeId: null };
-  }
-}
-
 function serverConversationToConversation(conv: ServerConversation, messages: Message[] = []): Conversation {
   return {
     id: conv.id,
@@ -75,6 +95,7 @@ function serverConversationToConversation(conv: ServerConversation, messages: Me
     messages,
     createdAt: Date.parse(conv.created_at),
     updatedAt: Date.parse(conv.updated_at),
+    isPinned: loadPinnedIds().has(conv.id),
   };
 }
 
@@ -90,7 +111,8 @@ function serverMessageToMessage(msg: ServerMessage): Message {
   };
 }
 
-const stored = loadFromStorage();
+clearGuestStorage();
+const stored = { conversations: [] as Conversation[], activeId: null as string | null };
 
 export const useChatStore = create<ChatState>((set, get) => ({
   conversations: stored.conversations,
@@ -99,10 +121,10 @@ export const useChatStore = create<ChatState>((set, get) => ({
   error: null,
 
   loadGuestState: () => {
-    const guest = loadFromStorage();
+    clearGuestStorage();
     set({
-      conversations: guest.conversations,
-      activeConversationId: guest.activeId,
+      conversations: [],
+      activeConversationId: null,
       isSending: false,
       error: null,
     });
@@ -110,7 +132,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
 
   loadServerConversations: async () => {
     const res = await listConversations();
-    const conversations = res.data?.conversations.map((conv) => serverConversationToConversation(conv)) || [];
+    const conversations = sortConversations(res.data?.conversations.map((conv) => serverConversationToConversation(conv)) || []);
     const activeConversationId = conversations[0]?.id || null;
     set({ conversations, activeConversationId });
 
@@ -128,28 +150,14 @@ export const useChatStore = create<ChatState>((set, get) => ({
       }
       const conv = serverConversationToConversation(serverConversation);
       set((state) => ({
-        conversations: [conv, ...state.conversations.filter((item) => item.id !== conv.id)],
+        conversations: sortConversations([conv, ...state.conversations.filter((item) => item.id !== conv.id)]),
         activeConversationId: conv.id,
       }));
       return conv.id;
     }
 
-    const id = generateId();
-    const conv: Conversation = {
-      id,
-      title: 'Cuộc hội thoại mới',
-      messages: [],
-      createdAt: Date.now(),
-      updatedAt: Date.now(),
-    };
-
-    set((state) => {
-      const conversations = [conv, ...state.conversations];
-      saveToStorage(conversations, id);
-      return { conversations, activeConversationId: id };
-    });
-
-    return id;
+    clearGuestStorage();
+    throw new Error('Vui lòng đăng nhập để tạo hội thoại.');
   },
 
   setActiveConversation: async (id) => {
@@ -170,7 +178,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
     }
 
     set((state) => {
-      const conversations = state.conversations.filter((c) => c.id !== id);
+      const conversations = sortConversations(state.conversations.filter((c) => c.id !== id));
       const activeConversationId =
         state.activeConversationId === id
           ? conversations[0]?.id || null
@@ -186,6 +194,43 @@ export const useChatStore = create<ChatState>((set, get) => ({
     }
     set({ conversations: [], activeConversationId: null });
     saveToStorage([], null);
+  },
+
+  renameConversation: async (id, title) => {
+    const safeTitle = title.trim().slice(0, 120);
+    if (!safeTitle) return;
+    let serverConversation: Conversation | undefined;
+    if (hasAuthToken()) {
+      const res = await updateConversationTitleApi(id, safeTitle);
+      if (res.data?.conversation) {
+        serverConversation = serverConversationToConversation(
+          res.data.conversation,
+          get().conversations.find((conv) => conv.id === id)?.messages || []
+        );
+      }
+    }
+
+    set((state) => {
+      const conversations = sortConversations(state.conversations.map((conv) => {
+        if (conv.id !== id) return conv;
+        return serverConversation || { ...conv, title: safeTitle, updatedAt: Date.now() };
+      }));
+      saveToStorage(conversations, state.activeConversationId);
+      return { conversations: sortConversations(conversations) };
+    });
+  },
+
+  togglePinConversation: (id) => {
+    const pinned = loadPinnedIds();
+    if (pinned.has(id)) pinned.delete(id); else pinned.add(id);
+    savePinnedIds(pinned);
+    set((state) => {
+      const conversations = sortConversations(state.conversations.map((conv) => (
+        conv.id === id ? { ...conv, isPinned: pinned.has(id) } : conv
+      )));
+      saveToStorage(conversations, state.activeConversationId);
+      return { conversations };
+    });
   },
 
   addMessage: (msg) => {
@@ -233,7 +278,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
       });
 
       saveToStorage(conversations, convId);
-      return { conversations };
+      return { conversations: sortConversations(conversations) };
     });
   },
 
@@ -247,7 +292,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
         };
       });
       saveToStorage(conversations, state.activeConversationId);
-      return { conversations };
+      return { conversations: sortConversations(conversations) };
     });
   },
 
@@ -258,7 +303,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
         ...state.conversations.filter((item) => item.id !== conversation.id),
       ];
       saveToStorage(conversations, state.activeConversationId || conversation.id);
-      return { conversations };
+      return { conversations: sortConversations(conversations) };
     });
   },
 

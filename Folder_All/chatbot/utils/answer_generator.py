@@ -2,7 +2,6 @@ from langchain_core.prompts import ChatPromptTemplate
 from langchain_core.runnables import RunnableSequence
 from langchain_core.output_parsers import StrOutputParser
 
-# from app.config import settings
 from chatbot.utils.custom_prompt import CustomPrompt
 
 
@@ -17,7 +16,6 @@ class AnswerGeneratorDocs:
         prompt = ChatPromptTemplate.from_messages(
             [
                 ("system", CustomPrompt.GENERATE_ANSWER_PROMPT),
-                # ("system", "{prompt}"),
                 ("human", """Ngữ cảnh (CHỈ sử dụng thông tin trong đây):
 ---
 {context}

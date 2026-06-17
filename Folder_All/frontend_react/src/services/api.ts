@@ -1,5 +1,14 @@
 import type {
+  AdminAuditLogsData,
+  AdminLoginData,
+  AdminSettingsData,
+  AdminSummaryData,
+  AdminTopUpData,
+  AdminUser,
+  AdminUserDetailData,
+  AdminUsersData,
   ApiResponse,
+  DatabaseTablesData,
   ChatHistoryData,
   ChatResponseData,
   ClearChatHistoryData,
@@ -11,6 +20,7 @@ import type {
   LoginSessionPollData,
   PaymentCreateData,
   PaymentStatusData,
+  SqlQueryData,
   TokenBalanceData,
   User,
   VerifyTokenData,
@@ -185,12 +195,121 @@ export async function verifyToken(token: string) {
   return data as ApiResponse<VerifyTokenData>;
 }
 
+
+export async function adminPasswordLogin(email: string, password: string) {
+  return request<ApiResponse<AdminLoginData>>(`${API_BASE}/v1/auth/admin/login`, {
+    method: 'POST',
+    body: JSON.stringify({ email, password }),
+  });
+}
+
 export async function getMe() {
   return request<ApiResponse<User>>(`${API_BASE}/v1/auth/me`);
 }
 
 export async function getBalance() {
   return request<ApiResponse<TokenBalanceData>>(`${API_BASE}/v1/me/balance`);
+}
+
+
+/* ─────────────────────── Admin API ─────────────────────── */
+
+export async function getAdminSummary(days = 14) {
+  return request<ApiResponse<AdminSummaryData>>(`${API_BASE}/v1/admin/summary?days=${days}`);
+}
+
+export async function getAdminUsers(search = '', limit = 100, offset = 0) {
+  const params = new URLSearchParams({
+    search,
+    limit: String(limit),
+    offset: String(offset),
+  });
+  return request<ApiResponse<AdminUsersData>>(`${API_BASE}/v1/admin/users?${params.toString()}`);
+}
+
+export async function getAdminAuditLogs(limit = 50, offset = 0) {
+  const params = new URLSearchParams({
+    limit: String(limit),
+    offset: String(offset),
+  });
+  return request<ApiResponse<AdminAuditLogsData>>(`${API_BASE}/v1/admin/audit-logs?${params.toString()}`);
+}
+
+export async function getAdminUserDetail(userEmail: string) {
+  return request<ApiResponse<AdminUserDetailData>>(`${API_BASE}/v1/admin/users/${encodeURIComponent(userEmail)}/detail`);
+}
+
+export function getAdminTransactionsCsvUrl(): string {
+  return `${API_BASE}/v1/admin/export/transactions.csv`;
+}
+
+export async function downloadAdminTransactionsCsv(): Promise<Blob> {
+  const res = await fetch(getAdminTransactionsCsvUrl(), {
+    headers: {
+      ...authHeaders(),
+    },
+  });
+
+  if (!res.ok) {
+    let message = `HTTP ${res.status}`;
+    try {
+      const data: unknown = await res.clone().json();
+      message = apiErrorMessage(data, message);
+    } catch {
+      const text = await res.text().catch(() => '');
+      if (text) message = text;
+    }
+    throw new Error(message);
+  }
+
+  return res.blob();
+}
+
+
+export async function updateUserAdminRole(userEmail: string, isAdmin: boolean) {
+  return request<ApiResponse<{ user: AdminUser }>>(
+    `${API_BASE}/v1/admin/users/${encodeURIComponent(userEmail)}/admin`,
+    {
+      method: 'PATCH',
+      body: JSON.stringify({ is_admin: isAdmin }),
+    }
+  );
+}
+
+export async function topUpUserTokens(userEmail: string, tokens: number, reason: string) {
+  return request<ApiResponse<AdminTopUpData>>(
+    `${API_BASE}/v1/admin/users/${encodeURIComponent(userEmail)}/tokens`,
+    {
+      method: 'POST',
+      body: JSON.stringify({ tokens, reason }),
+    }
+  );
+}
+
+
+export async function getDatabaseTables() {
+  return request<ApiResponse<DatabaseTablesData>>(`${API_BASE}/v1/admin/database/tables`);
+}
+
+export async function runReadOnlySql(query: string, limit = 100) {
+  return request<ApiResponse<SqlQueryData>>(`${API_BASE}/v1/admin/database/query`, {
+    method: 'POST',
+    body: JSON.stringify({ query, limit }),
+  });
+}
+
+export async function getAdminSettings() {
+  return request<ApiResponse<AdminSettingsData>>(`${API_BASE}/v1/admin/settings`);
+}
+
+export async function updateAdminSetting(key: string, value: string) {
+  return request<ApiResponse<{ setting: AdminSettingsData['settings'][number] }>>(
+    `${API_BASE}/v1/admin/settings/${encodeURIComponent(key)}`,
+    {
+      method: 'PUT',
+      body: JSON.stringify({ value }),
+    }
+  );
 }
 
 /* ─────────────────────── Payment API ─────────────────────── */

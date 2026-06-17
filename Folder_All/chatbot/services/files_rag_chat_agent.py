@@ -3,7 +3,7 @@ FilesChatAgent: Tác nhân chatbot sử dụng RAG (Retrieval-Augmented Generati
 
 Nhiệm vụ:
     - Nhận câu hỏi người dùng.
-    - Truy xuất các tài liệu liên quan từ vector store dùng Energy Retriever.
+    - Truy xuất tài liệu bằng GT1 Single-Vector ERC.
     - Chấm điểm và lọc ra tài liệu có liên quan.
     - Sinh câu trả lời dựa trên câu hỏi + tài liệu đã lọc.
     - Xử lý trường hợp không tìm thấy câu trả lời.
@@ -12,12 +12,10 @@ Quy trình:
     START -> retrieve -> grade_documents -> (generate | handle_no_answer) -> END
 """
 
-import os
 import re
 from typing import Dict, Any
 
-from ingestion.query_splitter import LLMQuerySplitter
-from ingestion.multi_vector_retriever import SplitQueryEnergyRetriever
+from ingestion.single_vector_retriever import SingleVectorERC
 from ingestion.model_embedding import vn_embedder
 from ingestion.chunks_document import ChromaDBManager
 from chatbot.utils.document_grader import DocumentGrader
@@ -35,7 +33,7 @@ class FilesChatAgent:
 
     Nhiệm vụ:
         - Nhận câu hỏi người dùng.
-        - Truy xuất các tài liệu liên quan từ vector store dùng Energy Retriever.
+        - Truy xuất tài liệu bằng GT1 Single-Vector ERC.
         - Chấm điểm và lọc ra tài liệu có liên quan.
         - Sinh câu trả lời dựa trên câu hỏi + tài liệu đã lọc.
         - Xử lý trường hợp không tìm thấy câu trả lời.
@@ -78,21 +76,12 @@ class FilesChatAgent:
                 embedding_function=self.embeddings
             )
         
-        # LLM tách câu hỏi thành nhiều query con, rồi tính Energy Distance
-        # giữa phân phối query vectors và từng cụm docs.
-        self.query_splitter = LLMQuerySplitter(
-            llm=self.llm,
-            max_parts=int(os.getenv("QUERY_SPLITTER_MAX_PARTS", "4")),
-            include_original=True,
-            min_query_vectors=int(os.getenv("QUERY_SPLITTER_MIN_QUERY_VECTORS", "2")),
-        )
-        self.split_query_retriever = SplitQueryEnergyRetriever(
+        # GT1: dung mot vector cua cau hoi goc, khong tach query bang LLM.
+        self.single_vector_retriever = SingleVectorERC(
             vector_store=self.vector_store,
             embeddings=self.embeddings,
-            query_splitter=self.query_splitter,
             k_retrieve=40,
             n_top_clusters=1,
-            max_final_docs=int(os.getenv("QUERY_SPLIT_MAX_FINAL_DOCS", "0")),
         )
 
     def handle_no_answer(self, state: GraphState) -> Dict[str, Any]:
@@ -183,7 +172,7 @@ class FilesChatAgent:
 
     def retrieve(self, state: GraphState) -> Dict[str, Any]:
         """
-        Truy xuất tài liệu từ vector store dựa trên câu hỏi, sử dụng Energy Retriever.
+        Truy xuất tài liệu bằng GT1 Single-Vector ERC.
 
         Args:
             state (GraphState): Trạng thái chứa câu hỏi.
@@ -193,14 +182,14 @@ class FilesChatAgent:
         """
         question = state["question"]
 
-        documents = self.split_query_retriever.retrieve(query=question)
+        documents = self.single_vector_retriever.retrieve(query=question)
 
         return {
             "documents": documents,
             "question": question,
-            "query_parts": self.split_query_retriever.last_query_parts,
-            "retrieval_debug": self.split_query_retriever.last_retrieval_debug,
-            "algorithm": self.split_query_retriever.last_algorithm,
+            "query_parts": self.single_vector_retriever.last_query_parts,
+            "retrieval_debug": self.single_vector_retriever.last_retrieval_debug,
+            "algorithm": self.single_vector_retriever.last_algorithm,
         }
 
     def get_workflow(self):

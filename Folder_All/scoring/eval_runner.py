@@ -1,7 +1,7 @@
 """
-Shared evaluation harness cho 3 pipeline GT1/GT2/GT3.
+Evaluation harness cho pipeline GT1 Single-Vector ERC.
 
-Mỗi pipeline chỉ cần cung cấp `retrieve_fn(question) -> (docs, query_parts)`.
+Retriever cung cấp `retrieve_fn(question) -> (docs, query_parts)`.
 Eval runner lo phần loading questions, grading, generating, lưu Excel.
 """
 
@@ -84,24 +84,30 @@ def run_eval(
     grader = DocumentGrader(llm)
     generator = AnswerGeneratorDocs(llm)
 
-    qa_list = load_questions(input_path, max_questions)
+    qa_list_full = load_questions(input_path, max_questions)
+    total = len(qa_list_full)
     columns = list(BASE_COLUMNS) + list((extra_columns or {}).keys())
     output_path = Path(output_path)
 
-    # Nếu start_from > 0: load kết quả cũ, chỉ chạy lại từ câu start_from
-    if start_from > 0 and output_path.exists():
-        existing_df = pd.read_excel(output_path)
-        results: list[dict] = existing_df.to_dict("records")
-        print(f"📂 Loaded {len(results)} kết quả cũ từ {output_path}")
-        # Cắt bỏ các hàng từ start_from trở đi để ghi đè
-        results = results[: start_from - 1]
-        qa_list = qa_list[start_from - 1 :]
-        print(f"▶️  Tiếp tục từ câu {start_from} ({len(qa_list)} câu còn lại)")
+    # Resume logic: nếu start_from > 0 thì luôn bỏ qua start_from-1 câu đầu,
+    # bất kể output file đã tồn tại hay chưa.
+    if start_from > 0:
+        qa_list = qa_list_full[start_from - 1 :]
+        if output_path.exists():
+            existing_df = pd.read_excel(output_path)
+            results: list[dict] = existing_df.to_dict("records")
+            print(f"📂 Loaded {len(results)} kết quả cũ từ {output_path}")
+            results = results[: start_from - 1]
+        else:
+            print(
+                f"⚠️ start_from={start_from} nhưng {output_path} chưa tồn tại; "
+                f"các câu 1..{start_from - 1} sẽ trống trong file output."
+            )
+            results = []
+        print(f"▶️  Tiếp tục từ câu {start_from} ({len(qa_list)}/{total} câu còn lại)")
     else:
+        qa_list = qa_list_full
         results = []
-
-    base_idx = start_from if start_from > 0 else 0
-    total = base_idx + len(qa_list)
 
     for idx, item in enumerate(qa_list, start_from if start_from > 0 else 1):
         q = item["question"]

@@ -1,88 +1,93 @@
-"""
-Quản lý cấu hình ứng dụng từ file .env.
-Sử dụng dotenv để load biến môi trường.
+"""Compatibility settings object backed by database runtime settings.
 
-Tham chiếu: docs/DOCS-main/skill_env_configuration.md
+New code should use app.runtime_config directly. This module exists so old imports of
+`from app.config import settings` do not depend on .env at import time.
 """
 
-import os
 from pathlib import Path
-from dotenv import load_dotenv
 
-# Tìm file .env từ thư mục gốc dự án
-_env_path = Path(__file__).parent.parent / ".env"
-load_dotenv(_env_path)
-
-WEAK_JWT_SECRETS = {
-    "change-this-in-production",
-    "chatbot-kinhte-default-secret-change-this",
-    "thay-doi-key-nay-khi-deploy-production",
-}
-
-
-def _resolve_env() -> str:
-    return os.getenv("ENV", "production").strip().lower()
-
-
-def _resolve_jwt_secret(env: str) -> str:
-    secret = os.getenv("JWT_SECRET_KEY", "").strip()
-    is_production = env in {"production", "prod"}
-
-    if is_production:
-        if not secret:
-            raise RuntimeError("JWT_SECRET_KEY is required when ENV=production.")
-        if secret in WEAK_JWT_SECRETS or len(secret) < 32:
-            raise RuntimeError(
-                "JWT_SECRET_KEY must be a non-default value with at least 32 characters "
-                "when ENV=production."
-            )
-
-    return secret or "dev-only-insecure-jwt-secret-change-before-production"
+from app.runtime_config import get_runtime_setting
 
 
 class Settings:
-    """
-    Cấu hình chung cho toàn bộ ứng dụng.
-    DIR_ROOT được xác định từ vị trí file .env để tránh lỗi đường dẫn tương đối.
-    """
-
-    # Thư mục gốc của dự án (dựa trên vị trí file .env)
     DIR_ROOT: str = str(Path(__file__).parent.parent)
 
-    # Môi trường: development hoặc production
-    ENV: str = _resolve_env()
+    @property
+    def ENV(self) -> str:
+        return get_runtime_setting("ENV", "production").strip().lower()
 
-    # AI Engine
-    DEFAULT_LLM: str = os.getenv("DEFAULT_LLM", "openai")
-    KEY_API_OPENAI: str = os.getenv("KEY_API_OPENAI", "")
-    OPENAI_LLM_MODEL_NAME: str = os.getenv("OPENAI_LLM_MODEL_NAME", "gpt-4o-mini")
-    GOOGLE_API_KEY: str = os.getenv("GOOGLE_API_KEY", "")
-    GOOGLE_LLM_MODEL_NAME: str = os.getenv("GOOGLE_LLM_MODEL_NAME", "gemini-2.5-flash")
-    GROQ_API_KEY: str = os.getenv("GROQ_API_KEY", "")
+    @property
+    def DEFAULT_LLM(self) -> str:
+        return get_runtime_setting("DEFAULT_LLM", "openai")
 
-    # JWT
-    JWT_SECRET_KEY: str = _resolve_jwt_secret(ENV)
+    @property
+    def KEY_API_OPENAI(self) -> str:
+        return get_runtime_setting("KEY_API_OPENAI", "")
 
-    # Google OAuth
-    GOOGLE_CLIENT_ID: str = os.getenv("GOOGLE_CLIENT_ID", "")
-    GOOGLE_CLIENT_SECRET: str = os.getenv("GOOGLE_CLIENT_SECRET", "")
-    OAUTH_REDIRECT_URI: str = os.getenv(
-        "OAUTH_REDIRECT_URI",
-        "http://localhost:8001/api/v1/auth/google/callback/flutter"
-    )
+    @property
+    def OPENAI_LLM_MODEL_NAME(self) -> str:
+        return get_runtime_setting("OPENAI_LLM_MODEL_NAME", "gpt-5-mini")
 
-    # CORS
-    ALLOW_ORIGINS: list = os.getenv(
-        "ALLOW_ORIGINS", "http://localhost:5173,http://localhost:8001"
-    ).split(",")
+    @property
+    def GOOGLE_API_KEY(self) -> str:
+        return get_runtime_setting("GOOGLE_API_KEY", "")
 
-    # Payment (SePay + VietQR)
-    NAME_WEB: str = os.getenv("NAME_WEB", "KTChatbot")
-    SEPAY_API_KEY: str = os.getenv("SEPAY_API_KEY", "")
-    SEPAY_ACCOUNT_NUMBER: str = os.getenv("SEPAY_ACCOUNT_NUMBER", "")
-    BANK_CODE: str = os.getenv("BANK_CODE", "MB")
-    BANK_NAME: str = os.getenv("BANK_NAME", "MB Bank")
-    BANK_ACCOUNT_NAME: str = os.getenv("BANK_ACCOUNT_NAME", "")
+    @property
+    def GOOGLE_LLM_MODEL_NAME(self) -> str:
+        return get_runtime_setting("GOOGLE_LLM_MODEL_NAME", "gemini-2.5-flash")
+
+    @property
+    def GROQ_API_KEY(self) -> str:
+        return get_runtime_setting("GROQ_API_KEY", "")
+
+    @property
+    def GROQ_LLM_MODEL_NAME(self) -> str:
+        return get_runtime_setting("GROQ_LLM_MODEL_NAME", "llama-3.1-8b-instant")
+
+    @property
+    def JWT_SECRET_KEY(self) -> str:
+        return get_runtime_setting("JWT_SECRET_KEY", "")
+
+    @property
+    def GOOGLE_CLIENT_ID(self) -> str:
+        return get_runtime_setting("GOOGLE_CLIENT_ID", "")
+
+    @property
+    def GOOGLE_CLIENT_SECRET(self) -> str:
+        return get_runtime_setting("GOOGLE_CLIENT_SECRET", "")
+
+    @property
+    def OAUTH_REDIRECT_URI(self) -> str:
+        return get_runtime_setting("OAUTH_REDIRECT_URI", "http://localhost:8001/api/v1/auth/google/callback/flutter")
+
+    @property
+    def ALLOW_ORIGINS(self) -> list[str]:
+        raw = get_runtime_setting("ALLOW_ORIGINS", "http://localhost:5173,http://localhost:8001")
+        return [origin.strip() for origin in raw.split(",") if origin.strip()]
+
+    @property
+    def NAME_WEB(self) -> str:
+        return get_runtime_setting("NAME_WEB", "KTChatbot")
+
+    @property
+    def SEPAY_API_KEY(self) -> str:
+        return get_runtime_setting("SEPAY_API_KEY", "")
+
+    @property
+    def SEPAY_ACCOUNT_NUMBER(self) -> str:
+        return get_runtime_setting("SEPAY_ACCOUNT_NUMBER", "")
+
+    @property
+    def BANK_CODE(self) -> str:
+        return get_runtime_setting("BANK_CODE", "MB")
+
+    @property
+    def BANK_NAME(self) -> str:
+        return get_runtime_setting("BANK_NAME", "MB Bank")
+
+    @property
+    def BANK_ACCOUNT_NAME(self) -> str:
+        return get_runtime_setting("BANK_ACCOUNT_NAME", "")
 
 
 settings = Settings()

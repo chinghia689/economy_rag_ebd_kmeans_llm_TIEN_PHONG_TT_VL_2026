@@ -10,14 +10,16 @@ from app.models.schemas import ApiSuccess, ApiError
 from app.security.security import get_current_user
 from chatbot.utils.base_db import UserDB
 from app.utils.sepay_helper import encode_payment_id, check_sepay_transaction, make_vietqr_url
-from app.config import settings
+from app.runtime_config import get_runtime_settings
 
 router = APIRouter(prefix="/payment", tags=["Payment"])
 
+PAYMENT_TTL_SECONDS = 5 * 60
+
 PAYMENT_PACKAGES = {
-    "basic": {"tokens": 100, "amount": 20000},
-    "pro": {"tokens": 500, "amount": 80000},
-    "premium": {"tokens": 2000, "amount": 250000},
+    "basic": {"tokens": 100, "amount": 30000},
+    "pro": {"tokens": 500, "amount": 120000},
+    "premium": {"tokens": 1200, "amount": 250000},
 }
 
 
@@ -52,6 +54,7 @@ async def create_payment(req: PaymentCreateReq, current_user: dict = Depends(get
     amount = float(package["amount"])
 
     with UserDB() as db:
+        db.delete_expired_pending_payments()
         # Tao record pending trong DB
         payment_id = db.create_payment_record(
             user_email=email,
@@ -59,6 +62,8 @@ async def create_payment(req: PaymentCreateReq, current_user: dict = Depends(get
             package_id=req.package_id,
             tokens=package["tokens"],
         )
+        payment = db.get_payment_record(payment_id)
+        expires_at = db.get_payment_expires_at(payment) if payment else None
 
     if not payment_id:
         raise HTTPException(
@@ -66,8 +71,14 @@ async def create_payment(req: PaymentCreateReq, current_user: dict = Depends(get
             detail=ApiError(message="Lỗi hệ thống khi tạo giao dịch.", error_code="PAYMENT_CREATE_ERROR").model_dump()
         )
 
+    payment_config = get_runtime_settings({
+        "NAME_WEB": "KTChatbot",
+        "SEPAY_ACCOUNT_NUMBER": "",
+        "BANK_NAME": "MB Bank",
+        "BANK_ACCOUNT_NAME": "",
+    })
     hex_id = encode_payment_id(payment_id)
-    content = f"{settings.NAME_WEB}NAPTOKEN{hex_id}"
+    content = f"{payment_config['NAME_WEB']}NAPTOKEN{hex_id}"
     qr_url = make_vietqr_url(int(amount), content)
 
     return ApiSuccess(data={
@@ -78,9 +89,11 @@ async def create_payment(req: PaymentCreateReq, current_user: dict = Depends(get
         "package_id": req.package_id,
         "tokens": package["tokens"],
         "qr_url": qr_url,
-        "bank_account": settings.SEPAY_ACCOUNT_NUMBER,
-        "bank_name": settings.BANK_NAME,
-        "account_name": settings.BANK_ACCOUNT_NAME,
+        "bank_account": payment_config["SEPAY_ACCOUNT_NUMBER"],
+        "bank_name": payment_config["BANK_NAME"],
+        "account_name": payment_config["BANK_ACCOUNT_NAME"],
+        "expires_at": expires_at,
+        "expires_in_seconds": PAYMENT_TTL_SECONDS,
     })
 
 @router.get("/status/{payment_id}")
@@ -108,6 +121,13 @@ async def check_payment_status(payment_id: int, current_user: dict = Depends(get
                 "status": "completed",
                 "token_balance": db.get_token_balance(email),
             })
+
+        if db.is_payment_expired(payment):
+            db.delete_payment_record(payment_id)
+            return ApiSuccess(
+                message="Giao dịch đã quá 5 phút và đã bị xóa.",
+                data={"status": "expired"},
+            )
             
         # Neu van dang pending -> Check SePay
         is_paid, sepay_tx_id = check_sepay_transaction(payment_id, payment["amount_vnd"])
@@ -129,4 +149,4 @@ async def check_payment_status(payment_id: int, current_user: dict = Depends(get
                 "token_balance": db.get_token_balance(email),
             })
             
-        return ApiSuccess(data={"status": "pending"})
+        return ApiSuccess(data={"status": "pending", "expires_at": db.get_payment_expires_at(payment)})
