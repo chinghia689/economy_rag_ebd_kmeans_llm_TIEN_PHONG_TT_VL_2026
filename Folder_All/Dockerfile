@@ -5,18 +5,13 @@
 # Run:    prefer docker-compose up -d --build so volumes and localhost binding are applied
 # ══════════════════════════════════════════════
 
-FROM nvidia/cuda:12.1.0-runtime-ubuntu22.04
+FROM python:3.10-slim
 
 # ── System dependencies ──
 ENV DEBIAN_FRONTEND=noninteractive
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    python3.10 python3-pip python3.10-venv \
     build-essential \
     && rm -rf /var/lib/apt/lists/*
-
-# Set python3.10 as default
-RUN update-alternatives --install /usr/bin/python python /usr/bin/python3.10 1 \
-    && update-alternatives --install /usr/bin/pip pip /usr/bin/pip3 1
 
 # ── Working directory ──
 WORKDIR /app

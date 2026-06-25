@@ -23,13 +23,6 @@ services:
       - ./chroma_economy_db:/app/chroma_economy_db
       # Persist SQLite app DB: API keys, users, payments, chat history
       - ./chatbot/data:/app/chatbot/data
-    deploy:
-      resources:
-        reservations:
-          devices:
-            - driver: nvidia
-              count: 1
-              capabilities: [gpu]
     restart: unless-stopped
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8001/api/health')"]

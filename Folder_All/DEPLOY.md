@@ -34,7 +34,7 @@ nano .env
 
 Fill secrets in `.env`. On first backend start, known app settings are seeded into SQLite at `chatbot/data/login_sessions.db`. After that, SQLite is the runtime source of truth, so changing `.env` will not overwrite non-empty settings already in the DB.
 
-Run backend:
+Run backend (CPU server, no NVIDIA runtime required):
 
 ```bash
 docker-compose up -d --build
