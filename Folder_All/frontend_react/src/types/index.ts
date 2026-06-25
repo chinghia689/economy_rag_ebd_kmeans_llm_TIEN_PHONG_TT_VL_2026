@@ -98,6 +98,19 @@ export interface HealthData {
   model_loaded: boolean;
 }
 
+export interface PublicContentSection {
+  title: string;
+  content: string;
+}
+
+export interface PublicContentData {
+  privacy: PublicContentSection;
+  terms: PublicContentSection;
+  support: PublicContentSection & {
+    email: string;
+  };
+}
+
 export interface TokenTransaction {
   id: number;
   user_email: string;

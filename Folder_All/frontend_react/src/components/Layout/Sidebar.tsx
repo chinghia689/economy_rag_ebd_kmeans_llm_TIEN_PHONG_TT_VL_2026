@@ -28,9 +28,10 @@ interface SidebarProps {
   onOpenPayment: () => void;
   onOpenLogin: () => void;
   onOpenTransactions: () => void;
+  onOpenDeleteAccount: () => void;
 }
 
-export default function Sidebar({ isDark, onToggleTheme, onOpenPayment, onOpenLogin, onOpenTransactions }: SidebarProps) {
+export default function Sidebar({ isDark, onToggleTheme, onOpenPayment, onOpenLogin, onOpenTransactions, onOpenDeleteAccount }: SidebarProps) {
   const {
     conversations,
     activeConversationId,
@@ -263,6 +264,17 @@ export default function Sidebar({ isDark, onToggleTheme, onOpenPayment, onOpenLo
           >
             <HiOutlineClock className="w-4 h-4" />
             <span>Lịch sử giao dịch</span>
+          </button>
+        )}
+
+        {isAuthenticated && (
+          <button
+            id="btn-delete-account"
+            onClick={onOpenDeleteAccount}
+            className="w-full flex items-center gap-2.5 px-3 py-2 rounded-xl text-sm text-red-300 hover:bg-red-500/10 hover:text-red-200 transition-all cursor-pointer"
+          >
+            <HiOutlineTrash className="w-4 h-4" />
+            <span>Xóa tài khoản</span>
           </button>
         )}
 

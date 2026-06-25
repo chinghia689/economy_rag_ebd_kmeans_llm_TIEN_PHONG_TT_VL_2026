@@ -2,7 +2,7 @@
 # Dockerfile - Chatbot Kinh Tế Việt Nam
 # ══════════════════════════════════════════════
 # Build:  docker build -t chatbot-kinhte .
-# Run:    docker run -p 8000:8000 --gpus all --env-file .env chatbot-kinhte
+# Run:    prefer docker-compose up -d --build so volumes and localhost binding are applied
 # ══════════════════════════════════════════════
 
 FROM nvidia/cuda:12.1.0-runtime-ubuntu22.04
@@ -31,20 +31,18 @@ RUN pip install --no-cache-dir --upgrade pip \
 COPY chatbot/ ./chatbot/
 COPY ingestion/ ./ingestion/
 COPY app/ ./app/
-COPY frontend/ ./frontend/
-COPY chroma_economy_db/ ./chroma_economy_db/
 
 # ── Environment ──
 ENV PYTHONUNBUFFERED=1
 ENV PYTHONDONTWRITEBYTECODE=1
-ENV PORT=8000
+ENV PORT=8001
 
 # ── Expose port ──
-EXPOSE 8000
+EXPOSE 8001
 
 # ── Health check ──
 HEALTHCHECK --interval=30s --timeout=10s --retries=3 \
-    CMD python -c "import urllib.request; urllib.request.urlopen('http://localhost:8000/api/health')" || exit 1
+    CMD python -c "import urllib.request; urllib.request.urlopen('http://localhost:8001/api/health')" || exit 1
 
 # ── Start server ──
 CMD ["python", "chatbot/services/server.py"]

@@ -1,18 +1,23 @@
-import { useState, useEffect, ReactNode } from 'react';
+import { useCallback, useState, useEffect, ReactNode } from 'react';
 import { BrowserRouter, Navigate, Route, Routes, useLocation } from 'react-router-dom';
 import Sidebar from './components/Layout/Sidebar';
 import MarketingNav from './components/Layout/MarketingNav';
+import Footer from './components/Layout/Footer';
 import ChatPage from './domains/chat/pages/ChatPage';
 import LoginModal from './domains/auth/components/LoginModal';
+import DeleteAccountModal from './domains/auth/components/DeleteAccountModal';
 import PaymentModal from './domains/payment/components/PaymentModal';
 import TransactionHistoryModal from './domains/payment/components/TransactionHistoryModal';
 import HomePage from './pages/HomePage';
 import AboutPage from './pages/AboutPage';
 import PricingPage from './pages/PricingPage';
 import InfoPage from './pages/InfoPage';
+import PublicContentPage from './pages/PublicContentPage';
 import AdminPage from './domains/admin/pages/AdminPage';
 import { useAuthStore } from './domains/auth/authStore';
 import { HiOutlineBars3 } from 'react-icons/hi2';
+import { getPublicContent } from './services/api';
+import { DEFAULT_PUBLIC_CONTENT } from './content/publicContent';
 
 interface MarketingFrameProps {
   children: ReactNode;
@@ -21,6 +26,8 @@ interface MarketingFrameProps {
   onOpenLogin: () => void;
   onOpenPayment: () => void;
   onOpenTransactions: () => void;
+  onOpenDeleteAccount: () => void;
+  publicContent: typeof DEFAULT_PUBLIC_CONTENT;
 }
 
 function MarketingFrame({
@@ -30,6 +37,8 @@ function MarketingFrame({
   onOpenLogin,
   onOpenPayment,
   onOpenTransactions,
+  onOpenDeleteAccount,
+  publicContent,
 }: MarketingFrameProps) {
   return (
     <div className="h-[100dvh] min-h-0 overflow-y-auto bg-[var(--bg-primary)]">
@@ -39,8 +48,10 @@ function MarketingFrame({
         onOpenLogin={onOpenLogin}
         onOpenPayment={onOpenPayment}
         onOpenTransactions={onOpenTransactions}
+        onOpenDeleteAccount={onOpenDeleteAccount}
       />
       {children}
+      <Footer content={publicContent} />
     </div>
   );
 }
@@ -53,6 +64,7 @@ interface ChatShellProps {
   onOpenLogin: () => void;
   onOpenPayment: () => void;
   onOpenTransactions: () => void;
+  onOpenDeleteAccount: () => void;
 }
 
 function ChatShell({
@@ -63,6 +75,7 @@ function ChatShell({
   onOpenLogin,
   onOpenPayment,
   onOpenTransactions,
+  onOpenDeleteAccount,
 }: ChatShellProps) {
   return (
     <div className="flex h-[100dvh] min-h-0 w-full overflow-hidden bg-[var(--bg-primary)]">
@@ -79,6 +92,7 @@ function ChatShell({
           onOpenPayment={onOpenPayment}
           onOpenLogin={onOpenLogin}
           onOpenTransactions={onOpenTransactions}
+          onOpenDeleteAccount={onOpenDeleteAccount}
         />
       </div>
 
@@ -119,6 +133,7 @@ function RouteMeta() {
       '/security': 'Bảo mật - Chatbot Kinh Tế Việt Nam',
       '/terms': 'Điều khoản - Chatbot Kinh Tế Việt Nam',
       '/privacy': 'Quyền riêng tư - Chatbot Kinh Tế Việt Nam',
+      '/support': 'Hỗ trợ - Chatbot Kinh Tế Việt Nam',
       '/chat': 'Chat - Chatbot Kinh Tế Việt Nam',
       '/admin': 'Admin - Chatbot Kinh Tế Việt Nam',
     };
@@ -132,8 +147,25 @@ function AppContent() {
   const [showLogin, setShowLogin] = useState(false);
   const [showPayment, setShowPayment] = useState(false);
   const [showTransactions, setShowTransactions] = useState(false);
+  const [showDeleteAccount, setShowDeleteAccount] = useState(false);
   const [isDark, setIsDark] = useState(true);
   const [sidebarOpen, setSidebarOpen] = useState(true);
+  const [publicContent, setPublicContent] = useState(DEFAULT_PUBLIC_CONTENT);
+
+  const refreshPublicContent = useCallback(async () => {
+    try {
+      const response = await getPublicContent();
+      if (response.data) {
+        setPublicContent(response.data);
+      }
+    } catch {
+      setPublicContent(DEFAULT_PUBLIC_CONTENT);
+    }
+  }, []);
+
+  useEffect(() => {
+    void refreshPublicContent();
+  }, [refreshPublicContent]);
 
   useEffect(() => {
     checkAuth();
@@ -168,6 +200,8 @@ function AppContent() {
     onOpenLogin: () => setShowLogin(true),
     onOpenPayment: () => setShowPayment(true),
     onOpenTransactions: () => setShowTransactions(true),
+    onOpenDeleteAccount: () => setShowDeleteAccount(true),
+    publicContent,
   };
 
   return (
@@ -198,7 +232,7 @@ function AppContent() {
             </MarketingFrame>
           }
         />
-        {(['docs', 'security', 'terms', 'privacy'] as const).map((type) => (
+        {(['docs', 'security'] as const).map((type) => (
           <Route
             key={type}
             path={`/${type}`}
@@ -209,11 +243,22 @@ function AppContent() {
             }
           />
         ))}
+        {(['privacy', 'terms', 'support'] as const).map((type) => (
+          <Route
+            key={type}
+            path={'/' + type}
+            element={
+              <MarketingFrame {...marketingProps}>
+                <PublicContentPage type={type} content={publicContent} />
+              </MarketingFrame>
+            }
+          />
+        ))}
         <Route
           path="/admin"
           element={
             <MarketingFrame {...marketingProps}>
-              <AdminPage onOpenLogin={() => setShowLogin(true)} />
+              <AdminPage onOpenLogin={() => setShowLogin(true)} onPublicContentUpdated={refreshPublicContent} />
             </MarketingFrame>
           }
         />
@@ -228,6 +273,7 @@ function AppContent() {
               onOpenLogin={() => setShowLogin(true)}
               onOpenPayment={() => setShowPayment(true)}
               onOpenTransactions={() => setShowTransactions(true)}
+              onOpenDeleteAccount={() => setShowDeleteAccount(true)}
             />
           }
         />
@@ -237,6 +283,7 @@ function AppContent() {
       <LoginModal isOpen={showLogin} onClose={() => setShowLogin(false)} />
       <PaymentModal isOpen={showPayment} onClose={() => setShowPayment(false)} />
       <TransactionHistoryModal isOpen={showTransactions} onClose={() => setShowTransactions(false)} />
+      <DeleteAccountModal isOpen={showDeleteAccount} onClose={() => setShowDeleteAccount(false)} />
     </>
   );
 }

@@ -26,6 +26,7 @@ from app.root_admin import (
     hash_admin_password,
     is_admin_password_hash,
 )
+from app.public_content import PUBLIC_CONTENT_SETTING_DEFINITIONS
 
 logger = get_logger(__name__)
 
@@ -41,6 +42,11 @@ GUEST_DAILY_QUESTION_LIMIT = 5
 GUEST_DAILY_TOKEN_LIMIT = 2000
 PAYMENT_TTL_MINUTES = 5
 ADMIN_EMAILS: set[str] = set()
+
+
+class DeletedAccountError(ValueError):
+    """Raised when an email permanently blocked after account deletion is reused."""
+
 
 APP_SETTING_DEFINITIONS = [
     {
@@ -211,7 +217,7 @@ APP_SETTING_DEFINITIONS = [
         "is_secret": 0,
         "description": "Ten chu tai khoan hien thi tren QR.",
     },
-]
+] + PUBLIC_CONTENT_SETTING_DEFINITIONS
 
 APP_SETTING_KEYS = {item["key"] for item in APP_SETTING_DEFINITIONS}
 
@@ -297,6 +303,21 @@ class UserDB:
 
         self._add_column_if_missing("users", "gravatar_url", "gravatar_url TEXT")
         self._add_column_if_missing("users", "is_admin", "is_admin INTEGER DEFAULT 0")
+
+        # Keep a permanent tombstone after an account is deleted. This table is
+        # intentionally separate from users so deleting personal data cannot make
+        # the same Google email eligible for registration again.
+        self.cursor.execute("""
+            CREATE TABLE IF NOT EXISTS deleted_accounts (
+                email TEXT PRIMARY KEY,
+                deleted_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                deleted_by TEXT NOT NULL
+            )
+        """)
+        self.cursor.execute("""
+            CREATE INDEX IF NOT EXISTS idx_deleted_accounts_deleted_at
+            ON deleted_accounts(deleted_at)
+        """)
 
         self.cursor.execute("""
             CREATE TABLE IF NOT EXISTS chat_messages (
@@ -431,7 +452,7 @@ class UserDB:
         """)
 
         for setting in APP_SETTING_DEFINITIONS:
-            default_value = setting["default"]
+            default_value = os.environ.get(setting["key"], setting["default"])
             if setting["key"] == "JWT_SECRET_KEY" and default_value == "__GENERATE_JWT_SECRET__":
                 default_value = f"{uuid4().hex}{uuid4().hex}"
             if setting["key"] == ADMIN_LOGIN_PASSWORD_KEY and default_value and not is_admin_password_hash(default_value):
@@ -528,6 +549,17 @@ class UserDB:
     # User Management
     # ------------------------------------------------------------------
 
+    def is_email_deleted(self, email: str) -> bool:
+        """Return True when an email is permanently blocked after deletion."""
+        normalized_email = (email or "").strip().lower()
+        if not normalized_email:
+            return False
+        self.cursor.execute(
+            f"SELECT 1 FROM deleted_accounts WHERE email = {self.P}",
+            (normalized_email,),
+        )
+        return self.cursor.fetchone() is not None
+
     def upsert_user(self, email: str, name: str = None, picture: str = None) -> dict:
         """
         Tạo hoặc cập nhật user khi đăng nhập.
@@ -542,6 +574,8 @@ class UserDB:
             Dict chứa thông tin user.
         """
         normalized_email = email.strip().lower()
+        if self.is_email_deleted(normalized_email):
+            raise DeletedAccountError("ACCOUNT_DELETED")
         gravatar = get_gravatar_url(normalized_email)
         # Nếu không có picture từ Google, dùng Gravatar
         final_picture = picture or gravatar
@@ -601,6 +635,62 @@ class UserDB:
         """, (1 if is_admin else 0, normalized_email))
         self.conn.commit()
         return self.get_user_by_email(normalized_email)
+
+    def delete_user_account(self, email: str, deleted_by: str) -> dict | None:
+        """Delete an account and its data while permanently blocking its email."""
+        normalized_email = (email or "").strip().lower()
+        actor_email = (deleted_by or normalized_email).strip().lower()
+        user = self.get_user_by_email(normalized_email)
+        if not user:
+            return None
+
+        self.cursor.execute(
+            f"SELECT value FROM app_settings WHERE key = {self.P}",
+            (ADMIN_LOGIN_ACCOUNT_KEY,),
+        )
+        root_row = self.cursor.fetchone()
+        root_email = canonical_admin_email(root_row["value"] if root_row else "admin@local")
+        if normalized_email == root_email:
+            raise PermissionError("ROOT_ADMIN_LOCKED")
+
+        try:
+            self.cursor.execute(f"""
+                INSERT INTO deleted_accounts (email, deleted_by)
+                VALUES ({self.P}, {self.P})
+                ON CONFLICT(email) DO NOTHING
+            """, (normalized_email, actor_email))
+
+            deleted_rows: dict[str, int] = {}
+            for table_name in (
+                "login_sessions",
+                "chat_messages",
+                "conversations",
+                "token_transactions",
+                "payments",
+                "user_balances",
+            ):
+                self.cursor.execute(
+                    f"DELETE FROM {table_name} WHERE user_email = {self.P}",
+                    (normalized_email,),
+                )
+                deleted_rows[table_name] = int(self.cursor.rowcount or 0)
+
+            self.cursor.execute(
+                f"DELETE FROM users WHERE email = {self.P}",
+                (normalized_email,),
+            )
+            if self.cursor.rowcount <= 0:
+                raise RuntimeError("USER_DELETE_FAILED")
+            deleted_rows["users"] = int(self.cursor.rowcount)
+            self.conn.commit()
+            return {
+                "email": normalized_email,
+                "deleted_by": actor_email,
+                "deleted_rows": deleted_rows,
+            }
+        except Exception:
+            self.conn.rollback()
+            raise
 
     # ------------------------------------------------------------------
     # Login Sessions
@@ -687,16 +777,10 @@ class UserDB:
         Returns:
             True nếu cập nhật thành công.
         """
-        self.cursor.execute(f"""
-               UPDATE login_sessions
-               SET token = {self.P}, status = 'completed',
-                   user_email = {self.P}, user_name = {self.P}, user_picture = {self.P}
-               WHERE session_id = {self.P}""",
-            (token, user_email, user_name, user_picture, session_id)
-        )
-        self.conn.commit()
+        if user_email and self.is_email_deleted(user_email):
+            raise DeletedAccountError("ACCOUNT_DELETED")
 
-        # Upsert user vào bảng users
+        # Upsert first so a blocked email can never receive a completed session.
         if user_email:
             self.upsert_user(
                 email=user_email,
@@ -704,7 +788,16 @@ class UserDB:
                 picture=user_picture
             )
 
-        return self.cursor.rowcount > 0
+        self.cursor.execute(f"""
+               UPDATE login_sessions
+               SET token = {self.P}, status = 'completed',
+                   user_email = {self.P}, user_name = {self.P}, user_picture = {self.P}
+               WHERE session_id = {self.P}""",
+            (token, user_email, user_name, user_picture, session_id)
+        )
+        updated = self.cursor.rowcount > 0
+        self.conn.commit()
+        return updated
 
     def delete_login_session(self, session_id: str) -> bool:
         """

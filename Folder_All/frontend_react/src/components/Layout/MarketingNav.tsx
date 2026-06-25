@@ -7,6 +7,7 @@ import {
   HiOutlineMoon,
   HiOutlineShieldCheck,
   HiOutlineSun,
+  HiOutlineTrash,
 } from 'react-icons/hi2';
 import { useAuthStore } from '../../domains/auth/authStore';
 
@@ -16,6 +17,7 @@ interface MarketingNavProps {
   onOpenLogin: () => void;
   onOpenPayment: () => void;
   onOpenTransactions: () => void;
+  onOpenDeleteAccount: () => void;
 }
 
 const navLinkClass = ({ isActive }: { isActive: boolean }) =>
@@ -31,6 +33,7 @@ export default function MarketingNav({
   onOpenLogin,
   onOpenPayment,
   onOpenTransactions,
+  onOpenDeleteAccount,
 }: MarketingNavProps) {
   const { user, isAuthenticated, logout } = useAuthStore();
 
@@ -116,13 +119,22 @@ export default function MarketingNav({
           </Link>
 
           {isAuthenticated ? (
-            <button
-              onClick={logout}
-              className="flex h-9 w-9 items-center justify-center rounded-lg text-[var(--text-secondary)] transition-colors hover:bg-red-500/10 hover:text-red-400"
-              title="Đăng xuất"
-            >
-              <HiOutlineArrowRightOnRectangle className="h-4 w-4" />
-            </button>
+            <>
+              <button
+                onClick={onOpenDeleteAccount}
+                className="flex h-9 w-9 items-center justify-center rounded-lg text-[var(--text-secondary)] transition-colors hover:bg-red-500/10 hover:text-red-400"
+                title="Xóa tài khoản"
+              >
+                <HiOutlineTrash className="h-4 w-4" />
+              </button>
+              <button
+                onClick={logout}
+                className="flex h-9 w-9 items-center justify-center rounded-lg text-[var(--text-secondary)] transition-colors hover:bg-red-500/10 hover:text-red-400"
+                title="Đăng xuất"
+              >
+                <HiOutlineArrowRightOnRectangle className="h-4 w-4" />
+              </button>
+            </>
           ) : (
             <button
               onClick={onOpenLogin}

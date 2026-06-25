@@ -68,6 +68,10 @@ class ConversationMessageRequest(BaseModel):
     prompt: Optional[str] = None
 
 
+class AccountDeletionRequest(BaseModel):
+    confirm_email: str
+
+
 class ChatResponseData(BaseModel):
     """Dữ liệu trả về trong response chat."""
     answer: str
@@ -395,6 +399,12 @@ app.include_router(payment_router, prefix="/api/v1")
 from app.routers.admin import router as admin_router
 app.include_router(admin_router, prefix="/api/v1")
 
+# ------------------------------------------------------------------
+# Public content Router
+# ------------------------------------------------------------------
+from app.routers.public import router as public_router
+app.include_router(public_router, prefix="/api/v1")
+
 
 # ------------------------------------------------------------------
 # /auth/me - Xac thuc token khi app khoi dong
@@ -430,6 +440,57 @@ async def get_current_user_balance(current_user: dict = Depends(get_current_user
             "token_balance": balance,
             "transactions": transactions,
         }
+    )
+
+
+@app.delete("/api/v1/me/account", tags=["User"])
+async def delete_current_user_account(
+    req: AccountDeletionRequest,
+    current_user: dict = Depends(get_current_user),
+):
+    """Delete the current account and permanently block its email."""
+    email = (current_user.get("email") or "").strip().lower()
+    if req.confirm_email.strip().lower() != email:
+        raise HTTPException(
+            status_code=400,
+            detail=ApiError(
+                message="Email xác nhận không khớp.",
+                error_code="EMAIL_CONFIRMATION_MISMATCH",
+            ).model_dump(),
+        )
+
+    with UserDB() as db:
+        try:
+            deleted = db.delete_user_account(email, deleted_by=email)
+        except PermissionError:
+            raise HTTPException(
+                status_code=400,
+                detail=ApiError(
+                    message="Không thể xóa tài khoản root admin.",
+                    error_code="ROOT_ADMIN_LOCKED",
+                ).model_dump(),
+            )
+        if deleted:
+            db.record_audit_log(
+                actor_email=email,
+                action="user.account.self_deleted",
+                target_type="user",
+                target_id=email,
+                details={"email_permanently_blocked": True},
+            )
+
+    if not deleted:
+        raise HTTPException(
+            status_code=404,
+            detail=ApiError(
+                message="Tài khoản không tồn tại.",
+                error_code="USER_NOT_FOUND",
+            ).model_dump(),
+        )
+
+    return ApiSuccess(
+        message="Tài khoản đã được xóa. Email này không thể đăng nhập lại.",
+        data={"deleted": True, "email_blocked": True},
     )
 
 

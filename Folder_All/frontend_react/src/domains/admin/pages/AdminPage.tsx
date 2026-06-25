@@ -15,9 +15,11 @@ import {
   HiOutlineShieldCheck,
   HiOutlineUsers,
   HiOutlineArrowDownTray,
+  HiOutlineTrash,
 } from 'react-icons/hi2';
 import {
   adminPasswordLogin,
+  deleteAdminUser,
   getAdminSettings,
   getAdminSummary,
   downloadAdminTransactionsCsv,
@@ -32,10 +34,23 @@ import {
 } from '../../../services/api';
 import type { AdminAuditLog, AdminDailyMetric, AdminSetting, AdminSummaryData, AdminUser, AdminUserDetailData, DatabaseTableInfo, SqlQueryData } from '../../../types';
 import { useAuthStore } from '../../auth/authStore';
+import PublicContentEditor from '../components/PublicContentEditor';
 
 interface AdminPageProps {
   onOpenLogin: () => void;
+  onPublicContentUpdated: () => void | Promise<void>;
 }
+
+const PUBLIC_CONTENT_KEYS = [
+  'PUBLIC_PRIVACY_TITLE',
+  'PUBLIC_PRIVACY_CONTENT',
+  'PUBLIC_TERMS_TITLE',
+  'PUBLIC_TERMS_CONTENT',
+  'PUBLIC_SUPPORT_TITLE',
+  'PUBLIC_SUPPORT_CONTENT',
+  'PUBLIC_SUPPORT_EMAIL',
+];
+const PUBLIC_CONTENT_KEY_SET = new Set<string>(PUBLIC_CONTENT_KEYS);
 
 function formatNumber(value: number | undefined) {
   return new Intl.NumberFormat('vi-VN').format(value || 0);
@@ -123,6 +138,8 @@ function auditActionLabel(action: string) {
     'admin.password_login': 'Đăng nhập admin',
     'user.admin_role.updated': 'Đổi quyền admin',
     'user.tokens.credited': 'Nạp credit',
+    'user.account.self_deleted': 'Người dùng xóa tài khoản',
+    'user.account.deleted_by_admin': 'Admin xóa tài khoản',
     'setting.updated': 'Đổi cấu hình',
     'settings.bulk_updated': 'Đổi nhiều cấu hình',
     'database.query.ran': 'Chạy SQL viewer',
@@ -240,7 +257,7 @@ function MiniLineChart({
   );
 }
 
-export default function AdminPage({ onOpenLogin }: AdminPageProps) {
+export default function AdminPage({ onOpenLogin, onPublicContentUpdated }: AdminPageProps) {
   const { user, isAuthenticated, isLoading, login, refreshBalance } = useAuthStore();
   const [summary, setSummary] = useState<AdminSummaryData | null>(null);
   const [users, setUsers] = useState<AdminUser[]>([]);
@@ -262,6 +279,7 @@ export default function AdminPage({ onOpenLogin }: AdminPageProps) {
   const [csvLoading, setCsvLoading] = useState(false);
   const [savingKey, setSavingKey] = useState<string | null>(null);
   const [roleUpdatingEmail, setRoleUpdatingEmail] = useState<string | null>(null);
+  const [deletingEmail, setDeletingEmail] = useState<string | null>(null);
   const [message, setMessage] = useState('');
   const [error, setError] = useState('');
   const [dateRangeDays, setDateRangeDays] = useState(14);
@@ -338,6 +356,7 @@ export default function AdminPage({ onOpenLogin }: AdminPageProps) {
   const auditLogs = summary?.recent_audit_logs || [];
   const latestMetric = dailyMetrics[dailyMetrics.length - 1];
   const alerts = summary?.alerts || [];
+  const runtimeSettings = settings.filter((setting) => !PUBLIC_CONTENT_KEY_SET.has(setting.key));
 
   async function handleAdminPasswordLogin(event: FormEvent) {
     event.preventDefault();
@@ -415,6 +434,30 @@ export default function AdminPage({ onOpenLogin }: AdminPageProps) {
     }
   }
 
+  async function handleDeleteUser(targetEmail: string) {
+    const confirmed = window.confirm(
+      `Xóa vĩnh viễn tài khoản ${targetEmail}? Toàn bộ dữ liệu sẽ bị xóa và email này không thể đăng nhập lại.`,
+    );
+    if (!confirmed) return;
+
+    setDeletingEmail(targetEmail);
+    setMessage('');
+    setError('');
+    try {
+      await deleteAdminUser(targetEmail);
+      if (selectedEmail === targetEmail) {
+        setSelectedEmail('');
+        setUserDetail(null);
+      }
+      setMessage(`Đã xóa ${targetEmail} và chặn email đăng nhập lại.`);
+      await loadAdminData(search);
+    } catch (err) {
+      setError(getErrorMessage(err, 'Không xóa được tài khoản.'));
+    } finally {
+      setDeletingEmail(null);
+    }
+  }
+
   async function handleTopUp(event: FormEvent) {
     event.preventDefault();
     if (!selectedEmail) return;
@@ -445,6 +488,30 @@ export default function AdminPage({ onOpenLogin }: AdminPageProps) {
       await loadAdminData(search);
     } catch (err) {
       setError(getErrorMessage(err, 'Không cập nhật được cấu hình.'));
+    } finally {
+      setSavingKey(null);
+    }
+  }
+
+  async function handleSavePublicContent() {
+    const requiredKeys = PUBLIC_CONTENT_KEYS.filter((key) => key !== 'PUBLIC_SUPPORT_EMAIL');
+    if (requiredKeys.some((key) => !(settingDrafts[key] ?? '').trim())) {
+      setError('Tiêu đề và nội dung chính sách, điều khoản, hỗ trợ không được để trống.');
+      return;
+    }
+
+    setSavingKey('PUBLIC_CONTENT');
+    setMessage('');
+    setError('');
+    try {
+      for (const key of PUBLIC_CONTENT_KEYS) {
+        await updateAdminSetting(key, settingDrafts[key] ?? '');
+      }
+      await loadAdminData(search);
+      await onPublicContentUpdated();
+      setMessage('Đã cập nhật chính sách bảo mật, điều khoản sử dụng và thông tin hỗ trợ.');
+    } catch (err) {
+      setError(getErrorMessage(err, 'Không cập nhật được nội dung công khai.'));
     } finally {
       setSavingKey(null);
     }
@@ -841,6 +908,15 @@ export default function AdminPage({ onOpenLogin }: AdminPageProps) {
                                 ? 'Gỡ admin'
                                 : 'Cấp admin'}
                           </button>
+                          <button
+                            onClick={() => void handleDeleteUser(item.email)}
+                            disabled={deletingEmail === item.email || item.email === user?.email}
+                            className="inline-flex h-9 items-center gap-1.5 rounded-lg border border-red-500/35 px-3 text-sm text-red-300 transition-colors hover:bg-red-500/10 disabled:cursor-not-allowed disabled:opacity-45"
+                            title={item.email === user?.email ? 'Không thể tự xóa tài khoản admin đang đăng nhập' : 'Xóa vĩnh viễn và chặn email'}
+                          >
+                            <HiOutlineTrash className="h-4 w-4" />
+                            {deletingEmail === item.email ? 'Đang xóa' : 'Xóa'}
+                          </button>
                         </div>
                       </td>
                     </tr>
@@ -939,6 +1015,14 @@ export default function AdminPage({ onOpenLogin }: AdminPageProps) {
           </div>
         </section>
 
+        <PublicContentEditor
+          values={settingDrafts}
+          isSaving={savingKey === 'PUBLIC_CONTENT'}
+          onChange={(key, value) => setSettingDrafts((current) => ({ ...current, [key]: value }))}
+          onSave={() => void handleSavePublicContent()}
+        />
+
+
         <section className="mt-8 rounded-lg border border-[var(--border-color)] bg-[var(--bg-secondary)]">
           <div className="border-b border-[var(--border-color)] p-4">
             <div className="flex items-center gap-2">
@@ -959,7 +1043,7 @@ export default function AdminPage({ onOpenLogin }: AdminPageProps) {
                 </tr>
               </thead>
               <tbody className="divide-y divide-[var(--border-color)]">
-                {settings.map((setting) => (
+                {runtimeSettings.map((setting) => (
                   <tr key={setting.key}>
                     <td className="px-4 py-3 text-[var(--text-secondary)]">{settingGroup(setting.key)}</td>
                     <td className="px-4 py-3 font-mono text-xs">{settingDisplayKey(setting.key)}</td>

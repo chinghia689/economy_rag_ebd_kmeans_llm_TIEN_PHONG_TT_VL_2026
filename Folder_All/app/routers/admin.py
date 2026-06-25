@@ -15,6 +15,7 @@ from app.root_admin import (
     canonical_admin_email,
     is_root_admin_email,
 )
+from app.public_content import PUBLIC_CONTENT_SETTING_KEYS
 from app.security.security import get_current_admin
 from chatbot.utils.base_db import UserDB
 
@@ -46,7 +47,7 @@ ADMIN_VISIBLE_SETTING_KEYS = {
     "BANK_CODE",
     "BANK_NAME",
     "BANK_ACCOUNT_NAME",
-}
+} | PUBLIC_CONTENT_SETTING_KEYS
 
 
 class TokenTopUpReq(BaseModel):
@@ -165,6 +166,58 @@ async def get_admin_user_detail(
         )
 
     return ApiSuccess(data=detail)
+
+
+@router.delete("/users/{user_email}")
+async def delete_admin_user(
+    user_email: str,
+    admin: dict = Depends(get_current_admin),
+):
+    """Delete a user account and permanently block its email."""
+    normalized_email = user_email.strip().lower()
+    current_admin_email = admin_email(admin)
+    if normalized_email == current_admin_email:
+        raise HTTPException(
+            status_code=400,
+            detail=ApiError(
+                message="Không thể tự xóa tài khoản admin đang đăng nhập.",
+                error_code="CANNOT_DELETE_SELF",
+            ).model_dump(),
+        )
+
+    with UserDB() as db:
+        try:
+            deleted = db.delete_user_account(normalized_email, deleted_by=current_admin_email)
+        except PermissionError:
+            raise HTTPException(
+                status_code=400,
+                detail=ApiError(
+                    message="Không thể xóa tài khoản root admin.",
+                    error_code="ROOT_ADMIN_LOCKED",
+                ).model_dump(),
+            )
+        if deleted:
+            db.record_audit_log(
+                actor_email=current_admin_email,
+                action="user.account.deleted_by_admin",
+                target_type="user",
+                target_id=normalized_email,
+                details={"email_permanently_blocked": True},
+            )
+
+    if not deleted:
+        raise HTTPException(
+            status_code=404,
+            detail=ApiError(
+                message="Tài khoản không tồn tại.",
+                error_code="USER_NOT_FOUND",
+            ).model_dump(),
+        )
+
+    return ApiSuccess(
+        message="Đã xóa tài khoản và chặn email đăng nhập lại.",
+        data={"deleted": True, "email_blocked": True},
+    )
 
 
 @router.patch("/users/{user_email}/admin")
@@ -436,4 +489,3 @@ async def run_readonly_sql(req: ReadOnlySqlReq, admin: dict = Depends(get_curren
         )
 
     return ApiSuccess(data={"columns": columns, "rows": data, "query": limited_query})
-

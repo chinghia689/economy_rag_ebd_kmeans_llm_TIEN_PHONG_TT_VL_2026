@@ -23,7 +23,7 @@ from fastapi import APIRouter, Form, HTTPException
 from fastapi.responses import HTMLResponse, RedirectResponse
 from pydantic import BaseModel, Field
 
-from chatbot.utils.base_db import UserDB
+from chatbot.utils.base_db import DeletedAccountError, UserDB
 from chatbot.utils.jwt_utils import create_jwt_token, verify_jwt_token
 from app.runtime_config import get_runtime_settings
 from app.root_admin import (
@@ -336,23 +336,55 @@ async def google_callback_flutter(code: str, state: str):
         )
 
     user_info = userinfo_response.json()
-    logger.info(f"Đăng nhập thành công: {user_info.get('email')}")
+    user_email = (user_info.get("email") or "").strip().lower()
+    if not user_email:
+        raise HTTPException(
+            status_code=400,
+            detail=ApiError(
+                message="Google không trả về email hợp lệ.",
+                error_code="MISSING_GOOGLE_EMAIL",
+            ).model_dump(),
+        )
+
+    with UserDB() as db:
+        if db.is_email_deleted(user_email):
+            db.delete_login_session(session_id)
+            raise HTTPException(
+                status_code=403,
+                detail=ApiError(
+                    message="Tài khoản này đã bị xóa và email không thể đăng nhập lại.",
+                    error_code="ACCOUNT_DELETED",
+                ).model_dump(),
+            )
+
+    logger.info(f"Đăng nhập thành công: {user_email}")
 
     # Step 3: Tạo JWT token
     jwt_token = create_jwt_token({
-        "email": user_info.get("email", ""),
+        "email": user_email,
         "name": user_info.get("name", ""),
         "picture": user_info.get("picture", ""),
     })
 
     # Step 4: Cập nhật DB
-    with UserDB() as db:
-        db.update_login_session(
-            session_id=session_id,
-            token=jwt_token,
-            user_email=user_info.get("email"),
-            user_name=user_info.get("name"),
-            user_picture=user_info.get("picture"),
+    try:
+        with UserDB() as db:
+            db.update_login_session(
+                session_id=session_id,
+                token=jwt_token,
+                user_email=user_email,
+                user_name=user_info.get("name"),
+                user_picture=user_info.get("picture"),
+            )
+    except DeletedAccountError:
+        with UserDB() as db:
+            db.delete_login_session(session_id)
+        raise HTTPException(
+            status_code=403,
+            detail=ApiError(
+                message="Tài khoản này đã bị xóa và email không thể đăng nhập lại.",
+                error_code="ACCOUNT_DELETED",
+            ).model_dump(),
         )
 
     # Step 5: Trả về trang HTML thành công (không dùng emoji)
@@ -472,14 +504,33 @@ async def verify_token(token: str = Form(...)):
             ).model_dump()
         )
 
+    email = (payload.get("email") or "").strip().lower()
+    with UserDB() as db:
+        user = db.get_user_by_email(email)
+        email_deleted = db.is_email_deleted(email)
+
+    if email_deleted or not user:
+        raise HTTPException(
+            status_code=401,
+            detail=ApiError(
+                message=(
+                    "Tài khoản đã bị xóa và email không thể đăng nhập lại."
+                    if email_deleted
+                    else "Phiên đăng nhập không còn hợp lệ."
+                ),
+                error_code="ACCOUNT_DELETED" if email_deleted else "USER_NOT_FOUND",
+            ).model_dump(),
+        )
+
     return ApiSuccess(
         message="Token hợp lệ",
         data={
             "valid": True,
             "user": {
-                "email": payload.get("email"),
-                "name": payload.get("name"),
-                "picture": payload.get("picture"),
+                "email": user["email"],
+                "name": user.get("name"),
+                "picture": user.get("picture"),
+                "is_admin": user.get("is_admin", False),
             }
         }
     )

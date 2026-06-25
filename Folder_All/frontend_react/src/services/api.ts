@@ -20,6 +20,7 @@ import type {
   LoginSessionPollData,
   PaymentCreateData,
   PaymentStatusData,
+  PublicContentData,
   SqlQueryData,
   TokenBalanceData,
   User,
@@ -152,6 +153,12 @@ export async function checkHealth() {
   return request<ApiResponse<HealthData>>(`${API_BASE}/health`);
 }
 
+/* ─────────────────────── Public Content API ─────────────────────── */
+
+export async function getPublicContent() {
+  return request<ApiResponse<PublicContentData>>(`${API_BASE}/v1/public/content`);
+}
+
 /* ─────────────────────── Auth API ─────────────────────── */
 
 export async function createLoginSession(sessionId: string) {
@@ -211,6 +218,13 @@ export async function getBalance() {
   return request<ApiResponse<TokenBalanceData>>(`${API_BASE}/v1/me/balance`);
 }
 
+export async function deleteMyAccount(confirmEmail: string) {
+  return request<ApiResponse<{ deleted: boolean; email_blocked: boolean }>>(`${API_BASE}/v1/me/account`, {
+    method: 'DELETE',
+    body: JSON.stringify({ confirm_email: confirmEmail }),
+  });
+}
+
 
 /* ─────────────────────── Admin API ─────────────────────── */
 
@@ -237,6 +251,13 @@ export async function getAdminAuditLogs(limit = 50, offset = 0) {
 
 export async function getAdminUserDetail(userEmail: string) {
   return request<ApiResponse<AdminUserDetailData>>(`${API_BASE}/v1/admin/users/${encodeURIComponent(userEmail)}/detail`);
+}
+
+export async function deleteAdminUser(userEmail: string) {
+  return request<ApiResponse<{ deleted: boolean; email_blocked: boolean }>>(
+    `${API_BASE}/v1/admin/users/${encodeURIComponent(userEmail)}`,
+    { method: 'DELETE' }
+  );
 }
 
 export function getAdminTransactionsCsvUrl(): string {

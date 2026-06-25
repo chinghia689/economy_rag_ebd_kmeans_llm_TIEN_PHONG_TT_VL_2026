@@ -149,3 +149,50 @@ img {
     transition-duration: 0.01ms !important;
   }
 }
+/* ── Editable public Markdown content ── */
+.public-content > * + * {
+  margin-top: 1rem;
+}
+
+.public-content h2,
+.public-content h3 {
+  color: var(--text-primary);
+  font-weight: 600;
+  line-height: 1.35;
+  margin-top: 1.75rem;
+}
+
+.public-content h2 {
+  font-size: 1.25rem;
+}
+
+.public-content h3 {
+  font-size: 1.05rem;
+}
+
+.public-content ul,
+.public-content ol {
+  padding-left: 1.4rem;
+}
+
+.public-content ul {
+  list-style: disc;
+}
+
+.public-content ol {
+  list-style: decimal;
+}
+
+.public-content li + li {
+  margin-top: 0.4rem;
+}
+
+.public-content a {
+  color: var(--success);
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+
+.public-content strong {
+  color: var(--text-primary);
+}

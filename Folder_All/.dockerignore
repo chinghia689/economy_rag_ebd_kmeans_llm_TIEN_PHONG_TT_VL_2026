@@ -1,0 +1,60 @@
+# Git and local env
+.git
+.gitignore
+.env
+.env.*
+!.env.example
+
+# Python cache and local envs
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.venv/
+venv/
+env/
+ai_env/
+
+# Runtime SQLite and local logs
+chatbot/data/
+*.db
+*.sqlite
+*.sqlite3
+*.log
+logs/
+
+# Vector stores and datasets are mounted, not baked into the image
+chroma_economy_db/
+chroma_ms_marco_db/
+chroma_scifact/
+chroma_db/
+Dataset_economy/
+Evaluate/
+Backup/
+*.xlsx
+*.xls
+*.xlsm
+*.csv
+*.parquet
+*.pickle
+*.pkl
+*.npy
+
+# Frontend dependencies/build output
+frontend_react/node_modules/
+frontend_react/dist/
+frontend_react/dist-ssr/
+frontend_react/.vite/
+node_modules/
+dist/
+build/
+
+# Editor/OS
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db

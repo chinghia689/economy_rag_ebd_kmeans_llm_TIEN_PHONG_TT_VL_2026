@@ -1,0 +1,60 @@
+# Environment and secrets
+.env
+.env.*
+!.env.example
+!.env.production.example
+
+# Runtime SQLite data: contains API keys, users, payments, chat history
+chatbot/data/
+*.db
+*.sqlite
+*.sqlite3
+
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.venv/
+venv/
+env/
+ai_env/
+
+# Logs
+*.log
+logs/
+
+# Large local data/vector stores
+chroma_economy_db/
+chroma_ms_marco_db/
+chroma_scifact/
+chroma_db/
+Dataset_economy/
+Evaluate/
+Backup/
+*.xlsx
+*.xls
+*.xlsm
+*.csv
+*.parquet
+*.pickle
+*.pkl
+*.npy
+
+# Frontend
+node_modules/
+frontend_react/node_modules/
+frontend_react/dist/
+frontend_react/dist-ssr/
+dist/
+build/
+
+# Editor/OS
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
