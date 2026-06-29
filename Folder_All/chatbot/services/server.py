@@ -12,20 +12,18 @@ Tham chiếu:
     - docs/DOCS-main/skill_coding_conventions.md
 """
 
+import asyncio
 import os
 import sys
 import time
 from pathlib import Path
 from threading import RLock
 from typing import Optional
-from contextlib import asynccontextmanager
-
-from dotenv import load_dotenv
+from contextlib import asynccontextmanager, suppress
 
 # Setup paths
 PROJECT_ROOT = Path(__file__).parent.parent.parent
 sys.path.insert(0, str(PROJECT_ROOT))
-load_dotenv(PROJECT_ROOT / ".env")
 
 import uuid
 
@@ -37,7 +35,9 @@ from pydantic import BaseModel
 
 from chatbot.main import ChatbotRunner
 from chatbot.utils.base_db import UserDB
+from chatbot.utils.greeting_handler import get_greeting_response
 from chatbot.utils.token_counter import count_tokens
+from app.runtime_config import get_runtime_setting, get_runtime_signature
 from app.models.schemas import ApiSuccess, ApiError
 from app.security.security import get_current_user
 from app.logger import get_logger
@@ -68,6 +68,10 @@ class ConversationMessageRequest(BaseModel):
     prompt: Optional[str] = None
 
 
+class AccountDeletionRequest(BaseModel):
+    confirm_email: str
+
+
 class ChatResponseData(BaseModel):
     """Dữ liệu trả về trong response chat."""
     answer: str
@@ -94,24 +98,81 @@ class HealthData(BaseModel):
 # Global state
 # ------------------------------------------------------------------
 VECTOR_STORE_PATH = str(PROJECT_ROOT / "chroma_economy_db")
-DEFAULT_LLM = os.getenv("DEFAULT_LLM", "openai")
-MAX_QUESTION_CHARS = int(os.getenv("MAX_QUESTION_CHARS", "4000"))
-
+LLM_RUNTIME_KEYS = [
+    "DEFAULT_LLM",
+    "KEY_API_OPENAI",
+    "OPENAI_LLM_MODEL_NAME",
+    "GOOGLE_API_KEY",
+    "GOOGLE_LLM_MODEL_NAME",
+    "GROQ_API_KEY",
+    "GROQ_LLM_MODEL_NAME",
+]
 chatbot_instance: ChatbotRunner = None
+chatbot_config_signature: tuple[tuple[str, str], ...] | None = None
 is_ready = False
 chatbot_lock = RLock()
+payment_cleanup_task: asyncio.Task | None = None
+
+
+def get_default_llm() -> str:
+    return get_runtime_setting("DEFAULT_LLM", "openai")
+
+
+def get_runtime_int(key: str, default: int) -> int:
+    try:
+        return int(get_runtime_setting(key, str(default)))
+    except (TypeError, ValueError):
+        return default
+
+
+def get_allow_origins() -> list[str]:
+    raw = get_runtime_setting("ALLOW_ORIGINS", "http://localhost:5173,http://localhost:8001")
+    origins = [origin.strip() for origin in raw.split(",") if origin.strip()]
+    return origins or ["http://localhost:5173", "http://localhost:8001"]
+
+
+def get_max_question_chars() -> int:
+    return get_runtime_int("MAX_QUESTION_CHARS", 4000)
+
+
+def get_task_config() -> dict[str, int]:
+    return {
+        "result_ttl": get_runtime_int("TASK_RESULT_TTL_SECONDS", 600),
+        "processing_timeout": get_runtime_int("TASK_PROCESSING_TIMEOUT_SECONDS", 1800),
+        "cleanup_interval": get_runtime_int("TASK_CLEANUP_INTERVAL_SECONDS", 60),
+    }
+
+
+async def cleanup_expired_payments_loop() -> None:
+    """Tu dong xoa payment pending qua han 5 phut."""
+    while True:
+        try:
+            with UserDB() as db:
+                deleted = db.delete_expired_pending_payments()
+            if deleted:
+                logger.info(f"Da xoa {deleted} payment pending qua 5 phut.")
+        except Exception as exc:
+            logger.warning(f"Khong the cleanup payment pending qua han: {exc}")
+        await asyncio.sleep(30)
 
 
 def get_chatbot() -> ChatbotRunner:
     """Lấy chatbot instance, khởi tạo lazy để server start không bị kẹt model/network."""
-    global chatbot_instance, is_ready
+    global chatbot_instance, chatbot_config_signature, is_ready
 
-    if chatbot_instance is not None:
+    current_signature = get_runtime_signature(LLM_RUNTIME_KEYS)
+    if chatbot_instance is not None and chatbot_config_signature == current_signature:
         return chatbot_instance
 
     with chatbot_lock:
-        if chatbot_instance is not None:
+        current_signature = get_runtime_signature(LLM_RUNTIME_KEYS)
+        if chatbot_instance is not None and chatbot_config_signature == current_signature:
             return chatbot_instance
+
+        if chatbot_instance is not None:
+            logger.info("Runtime LLM config changed; recreating chatbot instance.")
+            chatbot_instance = None
+            is_ready = False
 
         if not os.path.exists(VECTOR_STORE_PATH):
             raise HTTPException(
@@ -123,13 +184,15 @@ def get_chatbot() -> ChatbotRunner:
             )
 
         try:
-            logger.info(f"Đang khởi tạo chatbot lazy với LLM: {DEFAULT_LLM}")
+            llm_provider = get_default_llm()
+            logger.info(f"Đang khởi tạo chatbot lazy với LLM: {llm_provider}")
             chatbot_instance = ChatbotRunner(
                 path_vector_store=VECTOR_STORE_PATH,
-                llm_provider=DEFAULT_LLM,
+                llm_provider=llm_provider,
             )
+            chatbot_config_signature = current_signature
             is_ready = True
-            logger.info(f"Chatbot đã sẵn sàng! LLM: {DEFAULT_LLM}")
+            logger.info(f"Chatbot đã sẵn sàng! LLM: {llm_provider}")
             return chatbot_instance
         except Exception as e:
             is_ready = False
@@ -153,11 +216,12 @@ def validate_question(question: str) -> str:
                 error_code="EMPTY_QUESTION"
             ).model_dump()
         )
-    if len(clean_question) > MAX_QUESTION_CHARS:
+    max_question_chars = get_max_question_chars()
+    if len(clean_question) > max_question_chars:
         raise HTTPException(
             status_code=400,
             detail=ApiError(
-                message=f"Câu hỏi quá dài. Tối đa {MAX_QUESTION_CHARS} ký tự.",
+                message=f"Câu hỏi quá dài. Tối đa {max_question_chars} ký tự.",
                 error_code="QUESTION_TOO_LONG"
             ).model_dump()
         )
@@ -165,7 +229,8 @@ def validate_question(question: str) -> str:
 
 
 def get_chat_token_count(text: str) -> int:
-    return max(1, count_tokens(text, os.getenv("OPENAI_LLM_MODEL_NAME", "gpt-4o-mini")))
+    model = get_runtime_setting("OPENAI_LLM_MODEL_NAME", "gpt-5-mini")
+    return max(1, count_tokens(text, model))
 
 
 def run_chat_workflow(question: str, prompt: str = "") -> tuple[str, list[dict], float, int]:
@@ -196,6 +261,34 @@ def run_chat_workflow(question: str, prompt: str = "") -> tuple[str, list[dict],
     return answer, sources, round(elapsed, 2), len(docs)
 
 
+def build_free_greeting_response(
+    *,
+    answer: str,
+    saved: dict,
+    conversation_id: str,
+) -> ApiSuccess:
+    response_data = ChatResponseData(
+        answer=answer,
+        sources=[],
+        response_time=0.0,
+        num_docs_retrieved=0,
+        num_docs_graded=0,
+        token_used=0,
+        conversation_id=conversation_id,
+        balance=saved["balance"],
+    ).model_dump()
+    response_data.update({
+        "user_message": saved["user_message"],
+        "bot_message": saved["bot_message"],
+        "conversation": saved["conversation"],
+        "is_free_greeting": True,
+    })
+    return ApiSuccess(
+        message="Phản hồi chào hỏi miễn phí",
+        data=response_data,
+    )
+
+
 def raise_insufficient_tokens(message: str = "Bạn đã hết token. Vui lòng nạp thêm token để tiếp tục."):
     raise HTTPException(
         status_code=402,
@@ -209,6 +302,8 @@ def raise_insufficient_tokens(message: str = "Bạn đã hết token. Vui lòng 
 @asynccontextmanager
 async def lifespan(app):
     """Khởi động server; chatbot được lazy-load ở request đầu tiên."""
+    global payment_cleanup_task
+
     logger.info("Đang khởi tạo Chatbot Server...")
 
     if not os.path.exists(VECTOR_STORE_PATH):
@@ -217,9 +312,18 @@ async def lifespan(app):
     else:
         logger.info("Vector store đã sẵn sàng; chatbot sẽ được tải khi có request đầu tiên.")
 
-    yield
+    payment_cleanup_task = asyncio.create_task(cleanup_expired_payments_loop())
 
-    logger.info("Shutting down server...")
+    try:
+        yield
+    finally:
+        if payment_cleanup_task:
+            payment_cleanup_task.cancel()
+            with suppress(asyncio.CancelledError):
+                await payment_cleanup_task
+            payment_cleanup_task = None
+
+        logger.info("Shutting down server...")
 
 
 # ------------------------------------------------------------------
@@ -232,11 +336,10 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
-# CORS — chỉ cho phép các origin cụ thể, không dùng "*" trong production
-from app.config import settings as _settings
+# CORS — đọc từ DB-backed runtime settings, không phụ thuộc .env.
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=_settings.ALLOW_ORIGINS,
+    allow_origins=get_allow_origins(),
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -290,6 +393,18 @@ app.include_router(auth_router, prefix="/api/v1")
 from app.routers.payment import router as payment_router
 app.include_router(payment_router, prefix="/api/v1")
 
+# ------------------------------------------------------------------
+# Admin Router
+# ------------------------------------------------------------------
+from app.routers.admin import router as admin_router
+app.include_router(admin_router, prefix="/api/v1")
+
+# ------------------------------------------------------------------
+# Public content Router
+# ------------------------------------------------------------------
+from app.routers.public import router as public_router
+app.include_router(public_router, prefix="/api/v1")
+
 
 # ------------------------------------------------------------------
 # /auth/me - Xac thuc token khi app khoi dong
@@ -328,6 +443,57 @@ async def get_current_user_balance(current_user: dict = Depends(get_current_user
     )
 
 
+@app.delete("/api/v1/me/account", tags=["User"])
+async def delete_current_user_account(
+    req: AccountDeletionRequest,
+    current_user: dict = Depends(get_current_user),
+):
+    """Delete the current account and permanently block its email."""
+    email = (current_user.get("email") or "").strip().lower()
+    if req.confirm_email.strip().lower() != email:
+        raise HTTPException(
+            status_code=400,
+            detail=ApiError(
+                message="Email xác nhận không khớp.",
+                error_code="EMAIL_CONFIRMATION_MISMATCH",
+            ).model_dump(),
+        )
+
+    with UserDB() as db:
+        try:
+            deleted = db.delete_user_account(email, deleted_by=email)
+        except PermissionError:
+            raise HTTPException(
+                status_code=400,
+                detail=ApiError(
+                    message="Không thể xóa tài khoản root admin.",
+                    error_code="ROOT_ADMIN_LOCKED",
+                ).model_dump(),
+            )
+        if deleted:
+            db.record_audit_log(
+                actor_email=email,
+                action="user.account.self_deleted",
+                target_type="user",
+                target_id=email,
+                details={"email_permanently_blocked": True},
+            )
+
+    if not deleted:
+        raise HTTPException(
+            status_code=404,
+            detail=ApiError(
+                message="Tài khoản không tồn tại.",
+                error_code="USER_NOT_FOUND",
+            ).model_dump(),
+        )
+
+    return ApiSuccess(
+        message="Tài khoản đã được xóa. Email này không thể đăng nhập lại.",
+        data={"deleted": True, "email_blocked": True},
+    )
+
+
 # ------------------------------------------------------------------
 # API Endpoints
 # ------------------------------------------------------------------
@@ -337,11 +503,28 @@ async def health_check():
     return ApiSuccess(
         data=HealthData(
             status="ready" if is_ready else "initializing",
-            llm_provider=DEFAULT_LLM,
+            llm_provider=get_default_llm(),
             vector_store=VECTOR_STORE_PATH,
             model_loaded=is_ready,
         ).model_dump()
     )
+
+
+@app.get("/api/internal/health", tags=["System"])
+async def internal_health_check(current_user: dict = Depends(get_current_user)):
+    """Health chi tiet cho van hanh noi bo."""
+    checks = {
+        "db": False,
+        "vector_store": os.path.exists(VECTOR_STORE_PATH),
+        "llm_configured": False,
+        "sepay_configured": False,
+    }
+    with UserDB() as db:
+        db.cursor.execute("SELECT 1")
+        checks["db"] = True
+        checks["llm_configured"] = bool((db.get_app_setting("KEY_API_OPENAI", "") or "").strip())
+        checks["sepay_configured"] = bool((db.get_app_setting("SEPAY_API_KEY", "") or "").strip() and (db.get_app_setting("SEPAY_ACCOUNT_NUMBER", "") or "").strip())
+    return ApiSuccess(data={"checks": checks, "ok": all(checks.values())})
 
 
 @app.get("/api/v1/chat/conversations", tags=["Conversations"])
@@ -433,14 +616,12 @@ async def send_chat_conversation_message(
     request: ConversationMessageRequest,
     current_user: dict = Depends(get_current_user),
 ):
-    """Gửi message trong một hội thoại, lưu DB và trừ token backend-side."""
+    """Gửi message; câu chào thuần túy được xử lý miễn phí."""
     question = validate_question(request.question)
     user_email = current_user["email"]
+    greeting_answer = get_greeting_response(question)
 
     with UserDB() as db:
-        balance = db.get_token_balance(user_email)
-        if balance <= 0:
-            raise_insufficient_tokens()
         if not db.get_conversation(user_email, conversation_id):
             raise HTTPException(
                 status_code=404,
@@ -449,6 +630,22 @@ async def send_chat_conversation_message(
                     error_code="CONVERSATION_NOT_FOUND"
                 ).model_dump()
             )
+
+        if greeting_answer:
+            saved = db.save_free_chat_exchange(
+                user_email=user_email,
+                conversation_id=conversation_id,
+                question=question,
+                answer=greeting_answer,
+            )
+            return build_free_greeting_response(
+                answer=greeting_answer,
+                saved=saved,
+                conversation_id=conversation_id,
+            )
+
+        if db.get_token_balance(user_email) <= 0:
+            raise_insufficient_tokens()
 
     try:
         answer, sources, response_time, num_docs = run_chat_workflow(question, request.prompt or "")
@@ -512,11 +709,11 @@ async def chat(
     """
     question = validate_question(request.question)
     user_email = current_user["email"]
+    greeting_answer = get_greeting_response(question)
 
     try:
         with UserDB() as db:
-            balance = db.get_token_balance(user_email)
-            if balance <= 0:
+            if not greeting_answer and db.get_token_balance(user_email) <= 0:
                 raise_insufficient_tokens()
 
             conversation = (
@@ -532,6 +729,19 @@ async def chat(
                         message="Cuộc hội thoại không tồn tại.",
                         error_code="CONVERSATION_NOT_FOUND"
                     ).model_dump()
+                )
+
+            if greeting_answer:
+                saved = db.save_free_chat_exchange(
+                    user_email=user_email,
+                    conversation_id=conversation["id"],
+                    question=question,
+                    answer=greeting_answer,
+                )
+                return build_free_greeting_response(
+                    answer=greeting_answer,
+                    saved=saved,
+                    conversation_id=conversation["id"],
                 )
 
         answer, sources, response_time, num_docs = run_chat_workflow(question)
@@ -635,9 +845,6 @@ async def clear_chat_history(current_user: dict = Depends(get_current_user)):
 # Async Task Polling (skill_async_task_polling.md)
 # Dùng cho các tác vụ AI nặng (background processing)
 # ------------------------------------------------------------------
-TASK_RESULT_TTL_SECONDS = int(os.getenv("TASK_RESULT_TTL_SECONDS", "600"))
-TASK_PROCESSING_TIMEOUT_SECONDS = int(os.getenv("TASK_PROCESSING_TIMEOUT_SECONDS", "1800"))
-TASK_CLEANUP_INTERVAL_SECONDS = int(os.getenv("TASK_CLEANUP_INTERVAL_SECONDS", "60"))
 
 task_store: dict[str, dict] = {}  # In-memory store cho task status
 task_store_lock = RLock()
@@ -660,7 +867,8 @@ def _cleanup_task_store(force: bool = False) -> None:
     global last_task_cleanup
 
     now = time.time()
-    if not force and now - last_task_cleanup < TASK_CLEANUP_INTERVAL_SECONDS:
+    task_config = get_task_config()
+    if not force and now - last_task_cleanup < task_config["cleanup_interval"]:
         return
 
     with task_store_lock:
@@ -671,7 +879,7 @@ def _cleanup_task_store(force: bool = False) -> None:
             updated_at = float(task.get("updated_at", task.get("start_time", now)))
             start_time = float(task.get("start_time", updated_at))
 
-            if status == "processing" and now - start_time > TASK_PROCESSING_TIMEOUT_SECONDS:
+            if status == "processing" and now - start_time > task_config["processing_timeout"]:
                 task_store[task_id] = {
                     **task,
                     "status": "failed",
@@ -680,7 +888,7 @@ def _cleanup_task_store(force: bool = False) -> None:
                 }
                 continue
 
-            if status in {"done", "failed"} and now - updated_at > TASK_RESULT_TTL_SECONDS:
+            if status in {"done", "failed"} and now - updated_at > task_config["result_ttl"]:
                 del task_store[task_id]
 
 
@@ -727,10 +935,11 @@ def _heavy_chat_worker(
 
         input_tokens = get_chat_token_count(question)
         output_tokens = get_chat_token_count(answer)
-        token_used = input_tokens + output_tokens
+        actual_tokens = input_tokens + output_tokens
+        token_used = 1
 
         with UserDB() as db:
-            balance = db.debit_user_tokens(user_email, token_used, f"async_chat:{task_id}")
+            balance = db.debit_user_tokens(user_email, token_used, f"async_chat:{task_id}:actual_tokens={actual_tokens}")
         if balance is None:
             _set_task_status(task_id, {
                 "status": "failed",
@@ -790,6 +999,44 @@ async def start_chat_task(
     question = validate_question(request.question)
     task_id = str(uuid.uuid4())
     user_email = current_user["email"]
+    greeting_answer = get_greeting_response(question)
+
+    if greeting_answer:
+        with UserDB() as db:
+            balance = db.get_token_balance(user_email)
+            db.save_chat_message(
+                user_email=user_email,
+                role="user",
+                content=question,
+                token_used=0,
+            )
+            db.save_chat_message(
+                user_email=user_email,
+                role="bot",
+                content=greeting_answer,
+                sources=[],
+                response_time=0.0,
+                num_docs=0,
+                token_used=0,
+            )
+
+        _cleanup_task_store()
+        _set_task_status(task_id, {
+            "status": "done",
+            "result": {
+                "answer": greeting_answer,
+                "sources": [],
+                "response_time": 0.0,
+                "num_docs": 0,
+                "token_used": 0,
+                "balance": balance,
+                "is_free_greeting": True,
+            },
+        })
+        return ApiSuccess(
+            message="Phản hồi chào hỏi miễn phí",
+            data={"task_id": task_id, "status": "done"},
+        )
 
     with UserDB() as db:
         if db.get_token_balance(user_email) <= 0:
@@ -894,7 +1141,7 @@ if FRONTEND_DIR.exists():
 if __name__ == "__main__":
     import uvicorn
 
-    port = int(os.getenv("PORT", 8001))
+    port = get_runtime_int("PORT", 8001)
     logger.info(f"Starting server on http://0.0.0.0:{port}")
     logger.info(f"API Docs: http://localhost:{port}/docs")
 

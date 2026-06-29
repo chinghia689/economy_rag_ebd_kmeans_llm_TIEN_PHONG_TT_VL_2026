@@ -15,15 +15,25 @@ Tham chiếu:
 """
 
 from html import escape
+import secrets
 from urllib.parse import urlencode
 
 import httpx
 from fastapi import APIRouter, Form, HTTPException
 from fastapi.responses import HTMLResponse, RedirectResponse
+from pydantic import BaseModel, Field
 
-from chatbot.utils.base_db import UserDB
+from chatbot.utils.base_db import DeletedAccountError, UserDB
 from chatbot.utils.jwt_utils import create_jwt_token, verify_jwt_token
-from app.config import settings
+from app.runtime_config import get_runtime_settings
+from app.root_admin import (
+    ADMIN_LOGIN_PASSWORD_KEY,
+    admin_identifier_aliases,
+    canonical_admin_email,
+    needs_admin_password_rehash,
+    normalize_admin_identifier,
+    verify_admin_password,
+)
 from app.models.schemas import ApiSuccess, ApiError
 from app.logger import get_logger
 
@@ -31,17 +41,106 @@ logger = get_logger(__name__)
 
 router = APIRouter(prefix="/auth", tags=["Authentication"])
 
+
+class AdminPasswordLoginRequest(BaseModel):
+    # Keep the wire field as `email` for backward compatibility with the frontend/API.
+    # It can be a real email or a fixed admin identifier such as `admin`.
+    email: str = Field(..., min_length=3, max_length=255)
+    password: str = Field(..., min_length=1, max_length=512)
+
+
+
 # ------------------------------------------------------------------
 # Google OAuth 2.0 Config
 # ------------------------------------------------------------------
-GOOGLE_CLIENT_ID = settings.GOOGLE_CLIENT_ID
-GOOGLE_CLIENT_SECRET = settings.GOOGLE_CLIENT_SECRET
-OAUTH_REDIRECT_URI = settings.OAUTH_REDIRECT_URI
-
 GOOGLE_AUTH_URL = "https://accounts.google.com/o/oauth2/v2/auth"
 GOOGLE_TOKEN_URL = "https://oauth2.googleapis.com/token"
 GOOGLE_USERINFO_URL = "https://www.googleapis.com/oauth2/v2/userinfo"
 
+
+def get_google_oauth_config() -> dict[str, str]:
+    return get_runtime_settings({
+        "GOOGLE_CLIENT_ID": "",
+        "GOOGLE_CLIENT_SECRET": "",
+        "OAUTH_REDIRECT_URI": "http://localhost:8001/api/v1/auth/google/callback/flutter",
+    })
+
+
+
+
+# ------------------------------------------------------------------
+# Admin password login
+# ------------------------------------------------------------------
+@router.post("/admin/login")
+async def admin_password_login(req: AdminPasswordLoginRequest):
+    """Dang nhap admin bang tai khoan va mat khau co dinh tu DB."""
+    admin_config = get_runtime_settings({
+        "ADMIN_LOGIN_EMAIL": "admin@local",
+        "ADMIN_LOGIN_PASSWORD": "",
+    })
+    expected_identifier = normalize_admin_identifier(admin_config["ADMIN_LOGIN_EMAIL"] or "")
+    expected_password = admin_config["ADMIN_LOGIN_PASSWORD"] or ""
+    login_identifier = normalize_admin_identifier(req.email)
+
+    if not expected_identifier or not expected_password:
+        raise HTTPException(
+            status_code=500,
+            detail=ApiError(
+                message="Admin password login chưa được cấu hình.",
+                error_code="ADMIN_LOGIN_NOT_CONFIGURED"
+            ).model_dump()
+        )
+
+    expected_aliases = admin_identifier_aliases(expected_identifier)
+    login_aliases = admin_identifier_aliases(login_identifier)
+    identifier_matches = any(
+        secrets.compare_digest(login_alias, expected_alias)
+        for login_alias in login_aliases
+        for expected_alias in expected_aliases
+    )
+
+    if not identifier_matches or not verify_admin_password(req.password, expected_password):
+        raise HTTPException(
+            status_code=401,
+            detail=ApiError(
+                message="Tài khoản hoặc mật khẩu admin không đúng.",
+                error_code="INVALID_ADMIN_CREDENTIALS"
+            ).model_dump()
+        )
+
+    email = canonical_admin_email(expected_identifier)
+
+    with UserDB() as db:
+        if needs_admin_password_rehash(expected_password):
+            db.update_app_setting(ADMIN_LOGIN_PASSWORD_KEY, req.password, updated_by=email)
+        user = db.upsert_user(email=email, name="Admin", picture=None)
+        user = db.set_user_admin(email, True) or user
+        db.record_audit_log(
+            actor_email=email,
+            action="admin.password_login",
+            target_type="user",
+            target_id=email,
+            details={"method": "fixed_password", "login_identifier": login_identifier},
+        )
+
+    jwt_token = create_jwt_token({
+        "email": user["email"],
+        "name": user.get("name") or "Admin",
+        "picture": user.get("picture") or "",
+    })
+
+    return ApiSuccess(
+        message="Đăng nhập admin thành công",
+        data={
+            "token": jwt_token,
+            "user": {
+                "email": user["email"],
+                "name": user.get("name") or "Admin",
+                "picture": user.get("picture"),
+                "is_admin": True,
+            }
+        }
+    )
 
 # ------------------------------------------------------------------
 # 1. Tạo phiên chờ đăng nhập
@@ -122,18 +221,19 @@ async def google_login_flutter(session_id: str):
     session_id được truyền qua tham số 'state' của OAuth
     để callback có thể liên kết kết quả với phiên đúng.
     """
-    if not GOOGLE_CLIENT_ID:
+    oauth_config = get_google_oauth_config()
+    if not oauth_config["GOOGLE_CLIENT_ID"]:
         raise HTTPException(
             status_code=500,
             detail=ApiError(
-                message="GOOGLE_CLIENT_ID chưa được cấu hình trong .env",
+                message="GOOGLE_CLIENT_ID chưa được cấu hình.",
                 error_code="MISSING_CONFIG"
             ).model_dump()
         )
 
     params = {
-        "client_id": GOOGLE_CLIENT_ID,
-        "redirect_uri": OAUTH_REDIRECT_URI,
+        "client_id": oauth_config["GOOGLE_CLIENT_ID"],
+        "redirect_uri": oauth_config["OAUTH_REDIRECT_URI"],
         "response_type": "code",
         "scope": "openid email profile",
         "state": session_id,
@@ -162,7 +262,8 @@ async def google_callback_flutter(code: str, state: str):
     """
     session_id = state
 
-    if not GOOGLE_CLIENT_ID or not GOOGLE_CLIENT_SECRET:
+    oauth_config = get_google_oauth_config()
+    if not oauth_config["GOOGLE_CLIENT_ID"] or not oauth_config["GOOGLE_CLIENT_SECRET"]:
         raise HTTPException(
             status_code=500,
             detail=ApiError(
@@ -189,9 +290,9 @@ async def google_callback_flutter(code: str, state: str):
             GOOGLE_TOKEN_URL,
             data={
                 "code": code,
-                "client_id": GOOGLE_CLIENT_ID,
-                "client_secret": GOOGLE_CLIENT_SECRET,
-                "redirect_uri": OAUTH_REDIRECT_URI,
+                "client_id": oauth_config["GOOGLE_CLIENT_ID"],
+                "client_secret": oauth_config["GOOGLE_CLIENT_SECRET"],
+                "redirect_uri": oauth_config["OAUTH_REDIRECT_URI"],
                 "grant_type": "authorization_code",
             },
         )
@@ -235,23 +336,55 @@ async def google_callback_flutter(code: str, state: str):
         )
 
     user_info = userinfo_response.json()
-    logger.info(f"Đăng nhập thành công: {user_info.get('email')}")
+    user_email = (user_info.get("email") or "").strip().lower()
+    if not user_email:
+        raise HTTPException(
+            status_code=400,
+            detail=ApiError(
+                message="Google không trả về email hợp lệ.",
+                error_code="MISSING_GOOGLE_EMAIL",
+            ).model_dump(),
+        )
+
+    with UserDB() as db:
+        if db.is_email_deleted(user_email):
+            db.delete_login_session(session_id)
+            raise HTTPException(
+                status_code=403,
+                detail=ApiError(
+                    message="Tài khoản này đã bị xóa và email không thể đăng nhập lại.",
+                    error_code="ACCOUNT_DELETED",
+                ).model_dump(),
+            )
+
+    logger.info(f"Đăng nhập thành công: {user_email}")
 
     # Step 3: Tạo JWT token
     jwt_token = create_jwt_token({
-        "email": user_info.get("email", ""),
+        "email": user_email,
         "name": user_info.get("name", ""),
         "picture": user_info.get("picture", ""),
     })
 
     # Step 4: Cập nhật DB
-    with UserDB() as db:
-        db.update_login_session(
-            session_id=session_id,
-            token=jwt_token,
-            user_email=user_info.get("email"),
-            user_name=user_info.get("name"),
-            user_picture=user_info.get("picture"),
+    try:
+        with UserDB() as db:
+            db.update_login_session(
+                session_id=session_id,
+                token=jwt_token,
+                user_email=user_email,
+                user_name=user_info.get("name"),
+                user_picture=user_info.get("picture"),
+            )
+    except DeletedAccountError:
+        with UserDB() as db:
+            db.delete_login_session(session_id)
+        raise HTTPException(
+            status_code=403,
+            detail=ApiError(
+                message="Tài khoản này đã bị xóa và email không thể đăng nhập lại.",
+                error_code="ACCOUNT_DELETED",
+            ).model_dump(),
         )
 
     # Step 5: Trả về trang HTML thành công (không dùng emoji)
@@ -371,14 +504,33 @@ async def verify_token(token: str = Form(...)):
             ).model_dump()
         )
 
+    email = (payload.get("email") or "").strip().lower()
+    with UserDB() as db:
+        user = db.get_user_by_email(email)
+        email_deleted = db.is_email_deleted(email)
+
+    if email_deleted or not user:
+        raise HTTPException(
+            status_code=401,
+            detail=ApiError(
+                message=(
+                    "Tài khoản đã bị xóa và email không thể đăng nhập lại."
+                    if email_deleted
+                    else "Phiên đăng nhập không còn hợp lệ."
+                ),
+                error_code="ACCOUNT_DELETED" if email_deleted else "USER_NOT_FOUND",
+            ).model_dump(),
+        )
+
     return ApiSuccess(
         message="Token hợp lệ",
         data={
             "valid": True,
             "user": {
-                "email": payload.get("email"),
-                "name": payload.get("name"),
-                "picture": payload.get("picture"),
+                "email": user["email"],
+                "name": user.get("name"),
+                "picture": user.get("picture"),
+                "is_admin": user.get("is_admin", False),
             }
         }
     )

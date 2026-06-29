@@ -1,5 +1,5 @@
 """
-GT3 — LLM Auto Splitter.
+Gt2_mutiquery — LLM Auto Splitter.
 
 LLM tự quyết định số sub-queries (1 → max_parts) dựa trên độ phức tạp câu hỏi.
 Luôn bao gồm câu hỏi gốc như vector đầu tiên.

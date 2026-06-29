@@ -125,6 +125,16 @@ def get_current_user(
     # Luon truy van lai DB de dam bao user chua bi xoa hoac doi quyen
     with UserDB() as db:
         user = db.get_user_by_email(email)
+        email_deleted = db.is_email_deleted(email)
+
+    if email_deleted:
+        raise HTTPException(
+            status_code=401,
+            detail=ApiError(
+                message="Tài khoản đã bị xóa và email không thể đăng nhập lại.",
+                error_code="ACCOUNT_DELETED"
+            ).model_dump()
+        )
 
     if not user:
         raise HTTPException(

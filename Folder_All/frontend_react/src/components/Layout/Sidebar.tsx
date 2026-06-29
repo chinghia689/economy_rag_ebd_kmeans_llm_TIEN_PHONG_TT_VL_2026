@@ -9,17 +9,28 @@ import {
   HiOutlineCircleStack,
   HiOutlineSun,
   HiOutlineMoon,
+  HiOutlineHome,
+  HiOutlineInformationCircle,
+  HiOutlineShieldCheck,
+  HiOutlineClock,
+  HiOutlineMagnifyingGlass,
+  HiOutlinePencilSquare,
+  HiOutlineBookmark,
+  HiOutlineBookmarkSlash,
+  HiOutlineCurrencyDollar,
 } from 'react-icons/hi2';
 import { useState } from 'react';
+import { NavLink } from 'react-router-dom';
 
 interface SidebarProps {
   isDark: boolean;
   onToggleTheme: () => void;
   onOpenPayment: () => void;
   onOpenLogin: () => void;
+  onOpenTransactions: () => void;
 }
 
-export default function Sidebar({ isDark, onToggleTheme, onOpenPayment, onOpenLogin }: SidebarProps) {
+export default function Sidebar({ isDark, onToggleTheme, onOpenPayment, onOpenLogin, onOpenTransactions }: SidebarProps) {
   const {
     conversations,
     activeConversationId,
@@ -27,26 +38,72 @@ export default function Sidebar({ isDark, onToggleTheme, onOpenPayment, onOpenLo
     setActiveConversation,
     deleteConversation,
     clearAllConversations,
+    renameConversation,
+    togglePinConversation,
   } = useChatStore();
 
   const { user, isAuthenticated, tokenBalance, logout } = useAuthStore();
   const [hoveredId, setHoveredId] = useState<string | null>(null);
+  const [conversationSearch, setConversationSearch] = useState('');
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [editingTitle, setEditingTitle] = useState('');
+  const filteredConversations = conversations.filter((conv) =>
+    conv.title.toLowerCase().includes(conversationSearch.trim().toLowerCase())
+  );
 
   return (
-    <aside className="flex flex-col h-full w-[300px] border-r border-[var(--border-color)] bg-[var(--bg-secondary)]">
+    <aside className="flex h-full min-h-0 w-[300px] flex-col overflow-hidden border-r border-[var(--border-color)] bg-[var(--bg-secondary)]">
       {/* ── Header ── */}
-      <div className="p-4 border-b border-[var(--border-color)]">
-        <h1 className="text-lg font-bold bg-gradient-to-r from-[#667eea] to-[#764ba2] bg-clip-text text-transparent">
-          🇻🇳 Chatbot Kinh Tế
+      <div className="flex-none p-4 border-b border-[var(--border-color)]">
+        <h1 className="flex items-center gap-2 text-lg font-bold text-[var(--text-primary)]">
+          <span className="text-xl" aria-hidden="true">🇻🇳</span>
+          <span>Chatbot Kinh Tế</span>
         </h1>
-        <p className="text-xs text-[var(--text-muted)] mt-1">RAG + Energy-Based Distance</p>
+        <p className="text-xs text-[var(--text-muted)] mt-1">Gt2_mutiquery Multi-Vector ERC</p>
       </div>
 
+
+      {/* ── Primary Navigation ── */}
+      <nav className="flex-none px-3 pt-3 space-y-1">
+        {[
+          { to: '/', label: 'Trang chủ', icon: HiOutlineHome, end: true },
+          { to: '/chat', label: 'Chat', icon: HiOutlineChatBubbleLeftRight },
+          { to: '/about', label: 'Giới thiệu', icon: HiOutlineInformationCircle },
+          { to: '/pricing', label: 'Bảng giá', icon: HiOutlineCurrencyDollar },
+          ...(user?.is_admin ? [{ to: '/admin', label: 'Admin', icon: HiOutlineShieldCheck }] : []),
+        ].map((item) => {
+          const Icon = item.icon;
+          return (
+            <NavLink
+              key={item.to}
+              to={item.to}
+              end={item.end}
+              className={({ isActive }) => `
+                flex items-center gap-2.5 rounded-xl px-3 py-2 text-sm transition-all
+                ${isActive
+                  ? 'bg-[var(--bg-hover)] text-[var(--text-primary)] border border-[var(--accent-primary)]/30'
+                  : 'text-[var(--text-secondary)] hover:bg-[var(--bg-hover)] hover:text-[var(--text-primary)] border border-transparent'
+                }
+              `}
+            >
+              <Icon className="h-4 w-4 text-[var(--accent-primary)]" />
+              <span>{item.label}</span>
+            </NavLink>
+          );
+        })}
+      </nav>
+
       {/* ── New Chat Button ── */}
-      <div className="p-3">
+      <div className="flex-none p-3">
         <button
           id="btn-new-chat"
-          onClick={() => void createConversation()}
+          onClick={() => {
+            if (!isAuthenticated) {
+              onOpenLogin();
+              return;
+            }
+            void createConversation();
+          }}
           className="w-full flex items-center gap-2 px-4 py-2.5 rounded-xl
                      border border-dashed border-[var(--border-color)]
                      hover:border-[var(--accent-primary)] hover:bg-[var(--bg-hover)]
@@ -58,51 +115,107 @@ export default function Sidebar({ isDark, onToggleTheme, onOpenPayment, onOpenLo
         </button>
       </div>
 
+      <div className="flex-none px-3 pb-2">
+        <div className="relative">
+          <HiOutlineMagnifyingGlass className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-[var(--text-muted)]" />
+          <input
+            value={conversationSearch}
+            onChange={(event) => setConversationSearch(event.target.value)}
+            className="h-9 w-full rounded-lg border border-[var(--border-color)] bg-[var(--bg-primary)] pl-9 pr-3 text-sm text-[var(--text-primary)] outline-none focus:border-[var(--accent-primary)]"
+            placeholder="Tìm hội thoại"
+          />
+        </div>
+      </div>
+
       {/* ── Conversation List ── */}
-      <div className="flex-1 overflow-y-auto px-2 space-y-1">
-        {conversations.length === 0 && (
+      <div className="min-h-0 flex-1 overflow-y-auto px-2 space-y-1 overscroll-contain">
+        {filteredConversations.length === 0 && (
           <div className="text-center py-8 text-[var(--text-muted)] text-xs">
-            Chưa có cuộc hội thoại nào
+            {conversations.length === 0 ? 'Chưa có cuộc hội thoại nào' : 'Không tìm thấy hội thoại'}
           </div>
         )}
-        {conversations.map((conv) => (
-          <button
+        {filteredConversations.map((conv) => (
+          <div
             key={conv.id}
-            onClick={() => setActiveConversation(conv.id)}
             onMouseEnter={() => setHoveredId(conv.id)}
             onMouseLeave={() => setHoveredId(null)}
             className={`
-              w-full flex items-center gap-2.5 px-3 py-2.5 rounded-xl text-left text-sm
-              transition-all duration-200 cursor-pointer group relative
+              group relative rounded-xl border text-sm transition-all duration-200
               ${
                 activeConversationId === conv.id
-                  ? 'bg-[var(--bg-hover)] text-[var(--text-primary)] border border-[var(--accent-primary)]/30'
-                  : 'text-[var(--text-secondary)] hover:bg-[var(--bg-hover)] border border-transparent'
+                  ? 'bg-[var(--bg-hover)] text-[var(--text-primary)] border-[var(--accent-primary)]/30'
+                  : 'text-[var(--text-secondary)] hover:bg-[var(--bg-hover)] border-transparent'
               }
             `}
           >
-            <HiOutlineChatBubbleLeftRight className="w-4 h-4 flex-shrink-0 text-[var(--accent-primary)]" />
-            <span className="truncate flex-1">{conv.title}</span>
-
-            {/* Delete button on hover */}
-            {hoveredId === conv.id && (
-              <span
-                onClick={(e) => {
-                  e.stopPropagation();
-                  void deleteConversation(conv.id);
+            {editingId === conv.id ? (
+              <form
+                onSubmit={(event) => {
+                  event.preventDefault();
+                  void renameConversation(conv.id, editingTitle).finally(() => setEditingId(null));
                 }}
-                className="absolute right-2 p-1 rounded-lg hover:bg-red-500/20 text-[var(--text-muted)]
-                           hover:text-red-400 transition-all"
+                className="flex items-center gap-2 px-2 py-2"
               >
-                <HiOutlineTrash className="w-3.5 h-3.5" />
-              </span>
+                <input
+                  value={editingTitle}
+                  onChange={(event) => setEditingTitle(event.target.value)}
+                  autoFocus
+                  className="min-w-0 flex-1 rounded-lg border border-[var(--border-color)] bg-[var(--bg-primary)] px-2 py-1 text-xs outline-none focus:border-[var(--accent-primary)]"
+                />
+                <button className="rounded-lg px-2 py-1 text-xs text-emerald-300 hover:bg-emerald-500/10">Lưu</button>
+              </form>
+            ) : (
+              <button
+                onClick={() => setActiveConversation(conv.id)}
+                className="flex w-full items-center gap-2.5 rounded-xl px-3 py-2.5 text-left"
+              >
+                <HiOutlineChatBubbleLeftRight className="h-4 w-4 flex-shrink-0 text-[var(--accent-primary)]" />
+                {conv.isPinned && <HiOutlineBookmark className="h-3.5 w-3.5 flex-shrink-0 text-amber-300" />}
+                <span className="min-w-0 flex-1 truncate">{conv.title}</span>
+              </button>
             )}
-          </button>
+
+            {hoveredId === conv.id && editingId !== conv.id && (
+              <div className="absolute right-2 top-1/2 flex -translate-y-1/2 items-center gap-1 rounded-lg bg-[var(--bg-hover)] px-1">
+                <button
+                  onClick={(event) => {
+                    event.stopPropagation();
+                    togglePinConversation(conv.id);
+                  }}
+                  className="rounded-md p-1 text-[var(--text-muted)] hover:text-amber-300"
+                  title={conv.isPinned ? 'Bỏ ghim' : 'Ghim'}
+                >
+                  {conv.isPinned ? <HiOutlineBookmarkSlash className="h-3.5 w-3.5" /> : <HiOutlineBookmark className="h-3.5 w-3.5" />}
+                </button>
+                <button
+                  onClick={(event) => {
+                    event.stopPropagation();
+                    setEditingId(conv.id);
+                    setEditingTitle(conv.title);
+                  }}
+                  className="rounded-md p-1 text-[var(--text-muted)] hover:text-[var(--text-primary)]"
+                  title="Đổi tên"
+                >
+                  <HiOutlinePencilSquare className="h-3.5 w-3.5" />
+                </button>
+                <button
+                  onClick={(event) => {
+                    event.stopPropagation();
+                    void deleteConversation(conv.id);
+                  }}
+                  className="rounded-md p-1 text-[var(--text-muted)] hover:text-red-400"
+                  title="Xóa"
+                >
+                  <HiOutlineTrash className="h-3.5 w-3.5" />
+                </button>
+              </div>
+            )}
+          </div>
         ))}
       </div>
 
       {/* ── Bottom Actions ── */}
-      <div className="p-3 border-t border-[var(--border-color)] space-y-2">
+      <div className="h-[250px] max-h-[45dvh] flex-none overflow-y-auto overscroll-contain p-3 border-t border-[var(--border-color)] space-y-2">
         {/* Dark mode toggle */}
         <button
           id="btn-toggle-theme"
@@ -120,7 +233,7 @@ export default function Sidebar({ isDark, onToggleTheme, onOpenPayment, onOpenLo
           <div className="px-3 py-2 rounded-xl bg-[var(--bg-card)] border border-[var(--border-color)]">
             <div className="flex items-center gap-2 text-sm text-[var(--text-primary)]">
               <HiOutlineCircleStack className="w-4 h-4 text-[var(--accent-primary)]" />
-              <span className="flex-1">Token còn lại</span>
+              <span className="flex-1">Credit còn lại</span>
               <span className="font-semibold">{tokenBalance ?? '...'}</span>
             </div>
           </div>
@@ -135,7 +248,21 @@ export default function Sidebar({ isDark, onToggleTheme, onOpenPayment, onOpenLo
                        hover:text-[var(--text-primary)] transition-all cursor-pointer"
           >
             <HiOutlineCreditCard className="w-4 h-4" />
-            <span>Nạp Token</span>
+            <span>Nạp credit</span>
+          </button>
+        )}
+
+
+        {isAuthenticated && (
+          <button
+            id="btn-open-transactions"
+            onClick={onOpenTransactions}
+            className="w-full flex items-center gap-2.5 px-3 py-2 rounded-xl text-sm
+                       text-[var(--text-secondary)] hover:bg-[var(--bg-hover)]
+                       hover:text-[var(--text-primary)] transition-all cursor-pointer"
+          >
+            <HiOutlineClock className="w-4 h-4" />
+            <span>Lịch sử giao dịch</span>
           </button>
         )}
 

@@ -1,4 +1,4 @@
-"""GT3 — Multi-vector ERC: phân phối query vectors (LLM auto-split) vs cluster docs (K-Means)."""
+"""Gt2_mutiquery — Multi-vector ERC: phân phối query vectors (LLM auto-split) vs cluster docs (K-Means)."""
 
 from __future__ import annotations
 

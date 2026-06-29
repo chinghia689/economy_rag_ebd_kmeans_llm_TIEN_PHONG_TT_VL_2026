@@ -1,7 +1,8 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { useAuthStore } from '../authStore';
 import { createLoginSession, pollLoginSession, getGoogleLoginUrl, getErrorMessage } from '../../../services/api';
-import { HiOutlineXMark } from 'react-icons/hi2';
+import { HiOutlineCheckCircle, HiOutlineLockClosed, HiOutlineXMark } from 'react-icons/hi2';
+import { useFocusTrap } from '../../../hooks/useFocusTrap';
 
 interface LoginModalProps {
   isOpen: boolean;
@@ -22,6 +23,7 @@ export default function LoginModal({ isOpen, onClose }: LoginModalProps) {
   const timeoutRef = useRef<number | null>(null);
   const statusRef = useRef(status);
   const sessionIdRef = useRef('');
+  const modalRef = useRef<HTMLDivElement | null>(null);
 
   const clearTimers = useCallback(() => {
     if (pollingRef.current) {
@@ -118,17 +120,26 @@ export default function LoginModal({ isOpen, onClose }: LoginModalProps) {
     }
   };
 
-  const handleClose = () => {
+  const handleClose = useCallback(() => {
     resetLoginState();
     onClose();
-  };
+  }, [onClose, resetLoginState]);
+
+  useFocusTrap(isOpen, modalRef, handleClose);
 
   if (!isOpen) return null;
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm animate-fade-in">
-      <div className="relative w-full max-w-md mx-4 p-8 rounded-2xl bg-[var(--bg-card)] border border-[var(--border-color)]
-                      shadow-2xl animate-fade-in-up">
+      <div
+        ref={modalRef}
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="login-title"
+        tabIndex={-1}
+        className="relative w-full max-w-md mx-4 p-8 rounded-2xl bg-[var(--bg-card)] border border-[var(--border-color)]
+                      shadow-2xl animate-fade-in-up"
+      >
         {/* Close */}
         <button
           onClick={handleClose}
@@ -142,12 +153,12 @@ export default function LoginModal({ isOpen, onClose }: LoginModalProps) {
         <div className="text-center">
           <div className="w-16 h-16 mx-auto mb-4 rounded-2xl bg-gradient-to-br from-[#667eea] to-[#764ba2]
                           flex items-center justify-center shadow-lg">
-            <span className="text-2xl">🔐</span>
+            <HiOutlineLockClosed className="h-8 w-8 text-white" />
           </div>
 
-          <h2 className="text-xl font-bold text-[var(--text-primary)] mb-2">Đăng nhập</h2>
+          <h2 id="login-title" className="text-xl font-bold text-[var(--text-primary)] mb-2">Đăng nhập</h2>
           <p className="text-sm text-[var(--text-secondary)] mb-6">
-            Đăng nhập để lưu lịch sử chat và nạp token
+            Đăng nhập để lưu lịch sử chat và nạp credit
           </p>
 
           {status === 'idle' && (
@@ -193,7 +204,7 @@ export default function LoginModal({ isOpen, onClose }: LoginModalProps) {
             <div className="py-4">
               <div className="w-12 h-12 mx-auto mb-3 rounded-full bg-[var(--success)]/20
                               flex items-center justify-center">
-                <span className="text-2xl">✅</span>
+                <HiOutlineCheckCircle className="h-7 w-7 text-[var(--success)]" />
               </div>
               <p className="text-sm text-[var(--success)] font-medium">Đăng nhập thành công!</p>
             </div>

@@ -1,9 +1,9 @@
 """
-Main entry point cho Chatbot RAG với Energy Distance Retriever.
+Main entry point cho Chatbot RAG với Gt2_mutiquery Multi-Vector ERC.
 
 Một ứng dụng chatbot sử dụng:
 - Vector Database (Chroma) với embeddings tiếng Việt
-- Energy-Based Distance cho retrieval nâng cao
+- Gt2_mutiquery LLM Auto Split + Multi-Vector ERC với K-Means và Energy Distance
 - LangGraph cho workflow xử lý
 - LLM (OpenAI, Gemini, local Ollama, etc.) để sinh câu trả lời
 """
@@ -12,10 +12,6 @@ import os
 import sys
 import argparse
 from pathlib import Path
-from dotenv import load_dotenv
-
-load_dotenv()
-
 # Thêm parent folder vào path
 sys.path.insert(0, str(Path(__file__).parent.parent))
 

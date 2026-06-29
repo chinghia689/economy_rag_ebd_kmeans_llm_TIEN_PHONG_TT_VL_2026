@@ -3,7 +3,7 @@ FilesChatAgent: Tác nhân chatbot sử dụng RAG (Retrieval-Augmented Generati
 
 Nhiệm vụ:
     - Nhận câu hỏi người dùng.
-    - Truy xuất các tài liệu liên quan từ vector store dùng Energy Retriever.
+    - Tách câu hỏi bằng LLM và truy xuất tài liệu bằng Gt2_mutiquery Multi-Vector ERC.
     - Chấm điểm và lọc ra tài liệu có liên quan.
     - Sinh câu trả lời dựa trên câu hỏi + tài liệu đã lọc.
     - Xử lý trường hợp không tìm thấy câu trả lời.
@@ -35,7 +35,7 @@ class FilesChatAgent:
 
     Nhiệm vụ:
         - Nhận câu hỏi người dùng.
-        - Truy xuất các tài liệu liên quan từ vector store dùng Energy Retriever.
+        - Tách câu hỏi bằng LLM và truy xuất tài liệu bằng Gt2_mutiquery Multi-Vector ERC.
         - Chấm điểm và lọc ra tài liệu có liên quan.
         - Sinh câu trả lời dựa trên câu hỏi + tài liệu đã lọc.
         - Xử lý trường hợp không tìm thấy câu trả lời.
@@ -78,8 +78,7 @@ class FilesChatAgent:
                 embedding_function=self.embeddings
             )
         
-        # LLM tách câu hỏi thành nhiều query con, rồi tính Energy Distance
-        # giữa phân phối query vectors và từng cụm docs.
+        # Gt2_mutiquery: LLM auto-split tạo nhiều query vectors, sau đó chọn cụm docs bằng Energy Distance.
         self.query_splitter = LLMQuerySplitter(
             llm=self.llm,
             max_parts=int(os.getenv("QUERY_SPLITTER_MAX_PARTS", "4")),
@@ -183,7 +182,7 @@ class FilesChatAgent:
 
     def retrieve(self, state: GraphState) -> Dict[str, Any]:
         """
-        Truy xuất tài liệu từ vector store dựa trên câu hỏi, sử dụng Energy Retriever.
+        Tách câu hỏi bằng LLM và truy xuất tài liệu bằng Gt2_mutiquery Multi-Vector ERC.
 
         Args:
             state (GraphState): Trạng thái chứa câu hỏi.

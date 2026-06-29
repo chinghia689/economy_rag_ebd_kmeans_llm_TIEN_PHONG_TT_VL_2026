@@ -13,7 +13,7 @@ câu hỏi
   → LLM sinh câu trả lời
 ```
 
-**Điểm khác biệt so với GT2/GT3:** Không dùng LLM tách câu hỏi. Phân phối query X là 1 vector duy nhất (phân phối suy biến, E_XX=0). Dùng để đánh giá baseline — xem multi-vector có thực sự tốt hơn không.
+**Điểm khác biệt so với GT2/Gt2_mutiquery:** Không dùng LLM tách câu hỏi. Phân phối query X là 1 vector duy nhất (phân phối suy biến, E_XX=0). Dùng để đánh giá baseline — xem multi-vector có thực sự tốt hơn không.
 
 ---
 
@@ -80,9 +80,9 @@ python scoring/main.py --file ../GT1_1Vector/GT1_eval_results.xlsx
 
 ---
 
-## So sánh với GT2/GT3
+## So sánh với GT2/Gt2_mutiquery
 
-GT1 là baseline cho GT2 (multi-vector fixed N) và GT3 (multi-vector auto-split). Nếu GT2/GT3 không vượt GT1, cần xem lại chất lượng LLM splitting hoặc energy distance implementation.
+GT1 là baseline cho GT2 (auto-split với giới hạn người dùng chọn) và Gt2_mutiquery (auto-split tối đa 5 vector). Nếu GT2/Gt2_mutiquery không vượt GT1, cần xem lại chất lượng LLM splitting hoặc energy distance implementation.
 
 ---
 

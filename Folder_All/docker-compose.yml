@@ -13,25 +13,19 @@ services:
       dockerfile: Dockerfile
     container_name: chatbot-kinhte
     ports:
-      - "8000:8000"
+      - "127.0.0.1:8001:8001"
     env_file:
       - .env
     environment:
-      - PORT=8000
-      - DEFAULT_LLM=openai
+      - PORT=8001
     volumes:
       # Mount vector DB để không cần rebuild khi update dữ liệu
       - ./chroma_economy_db:/app/chroma_economy_db
-    deploy:
-      resources:
-        reservations:
-          devices:
-            - driver: nvidia
-              count: 1
-              capabilities: [gpu]
+      # Persist SQLite app DB: API keys, users, payments, chat history
+      - ./chatbot/data:/app/chatbot/data
     restart: unless-stopped
     healthcheck:
-      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/api/health')"]
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8001/api/health')"]
       interval: 30s
       timeout: 10s
       retries: 3

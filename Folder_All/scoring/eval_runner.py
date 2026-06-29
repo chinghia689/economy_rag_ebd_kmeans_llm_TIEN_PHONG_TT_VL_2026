@@ -1,5 +1,5 @@
 """
-Shared evaluation harness cho 3 pipeline GT1/GT2/GT3.
+Shared evaluation harness cho 3 pipeline GT1/GT2/Gt2_mutiquery.
 
 Mỗi pipeline chỉ cần cung cấp `retrieve_fn(question) -> (docs, query_parts)`.
 Eval runner lo phần loading questions, grading, generating, lưu Excel.
