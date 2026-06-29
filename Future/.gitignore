@@ -1,0 +1,70 @@
+# Environment and secrets
+.env
+.env.*
+!.env.example
+
+# Data and evaluation outputs
+Dataset_economy/
+Evaluate/
+Backup/Evaluate/
+*.xlsx
+*.xls
+*.xlsm
+*.csv
+*.parquet
+
+# Vector databases and generated indexes
+chroma_economy_db/
+chroma_ms_marco_db/
+chroma_scifact/
+chroma_db/
+*.sqlite3
+*.sqlite
+*.db
+*.pickle
+*.pkl
+*.npy
+**/data_level0.bin
+**/header.bin
+**/length.bin
+**/link_lists.bin
+**/msmarco_embeddings.npy
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.pyo
+*.pyd
+.Python
+*.egg-info/
+.venv/
+venv/
+env/
+ai_env/
+
+# Frontend
+node_modules/
+dist/
+build/
+.next/
+
+# Runtime storage
+utils/data_vector/
+utils/download/
+utils/upload_temp/
+utils/logs/
+*.log
+
+# IDE and OS
+.vscode/
+.idea/
+*.swp
+*.swo
+.DS_Store
+Thumbs.db
+
+# Certificates and keys
+*.pem
+*.key
+*.crt
