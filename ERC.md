@@ -2,6 +2,8 @@
 
 **ERC-RAG (Energy-based Retrieval Clustering for Retrieval-Augmented Generation)** là phương pháp truy xuất tăng cường cho chatbot hỏi đáp kinh tế tiếng Việt. Phương pháp kết hợp tìm kiếm vector, phân cụm tài liệu và khoảng cách năng lượng (*energy distance*) để chọn ngữ cảnh phù hợp trước khi mô hình ngôn ngữ tạo câu trả lời.
 
+Xem [README hướng dẫn ứng dụng và pipeline ERC](Folder_All/README.md).
+
 ## Ý tưởng
 
 RAG thông thường thường xếp hạng từng đoạn tài liệu riêng lẻ bằng cosine similarity. ERC-RAG bổ sung bước đánh giá các nhóm tài liệu: sau khi lấy tập ứng viên ban đầu, hệ thống gom các đoạn có embedding gần nhau thành cụm, rồi so sánh embedding của câu hỏi với phân bố embedding trong từng cụm. Cụm có khoảng cách năng lượng nhỏ nhất được chọn làm nguồn ngữ cảnh.
