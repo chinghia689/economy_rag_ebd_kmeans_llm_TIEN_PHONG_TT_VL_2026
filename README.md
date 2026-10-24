@@ -1,25 +1,59 @@
 # ERC-RAG
 
-**ERC-RAG (Energy-based Retrieval Clustering for Retrieval-Augmented Generation)** là phương pháp truy xuất tăng cường cho chatbot hỏi đáp kinh tế tiếng Việt. Phương pháp kết hợp tìm kiếm vector, phân cụm tài liệu và khoảng cách năng lượng (*energy distance*) để chọn ngữ cảnh phù hợp trước khi mô hình ngôn ngữ tạo câu trả lời.
+**Energy-based Retrieval Clustering for Retrieval-Augmented Generation** is a research implementation for Vietnamese economic question answering. It tests whether selecting a cluster of candidate passages with energy distance can improve RAG context selection over standard cosine retrieval.
 
-Xem [README hướng dẫn ứng dụng và pipeline ERC](Folder_All/README.md).
+> The current benchmark check does not establish that ERC-RAG outperforms the cosine baseline. See [Evaluation](#evaluation) before interpreting the reported metrics.
 
-## Ý tưởng
+**Stack:** Python · multilingual-E5 · ChromaDB · K-Means · energy distance · LangChain
 
-RAG thông thường thường xếp hạng từng đoạn tài liệu riêng lẻ bằng cosine similarity. ERC-RAG bổ sung bước đánh giá các nhóm tài liệu: sau khi lấy tập ứng viên ban đầu, hệ thống gom các đoạn có embedding gần nhau thành cụm, rồi so sánh embedding của câu hỏi với phân bố embedding trong từng cụm. Cụm có khoảng cách năng lượng nhỏ nhất được chọn làm nguồn ngữ cảnh.
+**Vietnamese overview:** [README.vi.md](README.vi.md) · **Application and pipeline:** [Folder_All/README.md](Folder_All/README.md)
 
-## Quy trình
+## Method
 
-1. Mã hóa câu hỏi thành vector và dùng cosine similarity lấy 40 đoạn tài liệu ứng viên.
-2. Phân cụm các vector tài liệu bằng K-Means; số cụm được chọn theo silhouette score.
-3. Tính energy distance giữa vector câu hỏi và các vector trong từng cụm.
-4. Chọn cụm có energy distance thấp nhất.
-5. Dùng mô hình ngôn ngữ lọc các tài liệu liên quan trong cụm được chọn, sau đó tạo câu trả lời dựa trên phần ngữ cảnh còn lại.
+1. Embed the question and retrieve 40 candidate passages from ChromaDB.
+2. Cluster candidate passage vectors with K-Means and select the cluster count using silhouette score.
+3. Calculate energy distance between the question vector and each cluster.
+4. Pass the selected cluster to the downstream relevance and answer-generation stages.
 
-## Đánh giá
+The implementation is in `Folder_All/ingestion/single_vector_retriever.py`; the energy-distance function is in `Folder_All/ingestion/energy_base_distance.py`.
 
-ERC-RAG được đánh giá cho bài toán hỏi đáp kinh tế tiếng Việt trên Vietnamese Economy Information Database (VEID), sử dụng bộ câu hỏi VNEIQAD. Tài liệu nghiên cứu báo cáo các chỉ số chất lượng câu trả lời như ROUGE-2 và BLEU-2, cùng các chỉ số truy xuất như MRR, Hit@5 và NDCG@5.
+## Evaluation
 
-## Tài liệu tham khảo
+An initial pure multilingual-E5 cosine top-5 run on the existing 1,000-question workbook and Chroma index produced:
 
-Chi-Nghia Ngo và Anh-Khoi Ngo-Ho, “ERC-RAG: An Energy-based Retrieval Clustering for RAG in Vietnamese Economy Chatbots.”
+| Metric | Cosine top-5 |
+| --- | ---: |
+| MRR | 0.7352 |
+| Hit@5 | 0.8040 |
+| NDCG@5 | 0.9805 |
+
+The current project materials report ERC-RAG **MRR 0.62** and **NDCG@5 0.83**. The existing ERC figures have not yet been reproduced through the same raw retrieval outputs and confirmed identical settings, so this is a preliminary comparison—not evidence that either method wins. The baseline is higher on these reported values; do not claim an ERC improvement until both methods are rerun with the same questions, index, and metric implementation.
+
+The baseline uses the project's current metric functions: MRR and Hit@5 look for the exact ground-truth answer text inside retrieved chunks, while NDCG@5 uses lexical token overlap. These definitions should be interpreted as project-specific retrieval proxies, not answer-quality metrics.
+
+### Reproduce the cosine baseline
+
+The question workbook and vector index are not committed. Supply the local paths to the benchmark workbook and Chroma index:
+
+```bash
+cd Folder_All
+python scoring/baseline_cosine.py \
+  --input "/path/to/file 1000 cau hoi.xlsx" \
+  --vector-store "/path/to/chroma_economy_db"
+```
+
+The script prints MRR, Hit@5, NDCG@5, and elapsed time; it does not write an output workbook. The `query:` prefix required by multilingual-E5 is applied in batches.
+
+## Data and reproducibility
+
+The research uses the Vietnamese Economy Information Database (VEID) and VNEIQAD question set. The local index contains 120,165 chunks. The source corpus, question workbook, and vector database are not bundled here; provide them locally before running evaluation. Keep data with distribution restrictions outside Git.
+
+For the full web application, API, and deployment instructions, see [Folder_All/README.md](Folder_All/README.md).
+
+## Limitations
+
+- The baseline and ERC-RAG numbers need a matched rerun before making a comparative claim.
+- Retrieval metrics do not measure answer faithfulness or factual accuracy.
+- NDCG uses the project's lexical-overlap relevance heuristic.
+- Energy distance between a single question vector and a candidate cluster is a research hypothesis; the benchmark should establish whether it helps on a controlled held-out set.
+- No license is specified. Confirm rights to the source corpus and code before reuse.
