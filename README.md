@@ -27,7 +27,11 @@ An initial pure multilingual-E5 cosine top-5 run on the existing 1,000-question 
 | Hit@5 | 0.8040 |
 | NDCG@5 | 0.9805 |
 
-The current project materials report ERC-RAG **MRR 0.62** and **NDCG@5 0.83**. The existing ERC figures have not yet been reproduced through the same raw retrieval outputs and confirmed identical settings, so this is a preliminary comparison—not evidence that either method wins. The baseline is higher on these reported values; do not claim an ERC improvement until both methods are rerun with the same questions, index, and metric implementation.
+The project report evaluates ERC-RAG on 1,000 automatically generated VNEIQAD question-answer pairs over 120,165 VEID chunks. It reports **MRR 0.62**, **NDCG@5 0.83**, **ROUGE-2 F1 0.68**, and **BLEU-2 0.65**, with GPT-5.0 mini used for answer generation. These are reported project results and have not yet been reproduced from the raw outputs in this repository.
+
+The report also gives answer-generation comparisons against an earlier group system: BLEU-2 **0.61 → 0.65** and ROUGE-2 F1 **0.49 → 0.68**. The earlier system used GPT-4o-mini while the ERC-RAG run used GPT-5.0 mini, so the comparison is not controlled for the generation model.
+
+The cosine top-5 baseline above is a separate run and reports higher MRR and NDCG@5 than the reported ERC-RAG results. The settings and raw retrieval outputs have not been confirmed identical, so this does not establish a head-to-head winner. Do not claim that ERC-RAG improves retrieval until both approaches are rerun on the same questions, index, and metric implementation.
 
 The baseline uses the project's current metric functions: MRR and Hit@5 look for the exact ground-truth answer text inside retrieved chunks, while NDCG@5 uses lexical token overlap. These definitions should be interpreted as project-specific retrieval proxies, not answer-quality metrics.
 
